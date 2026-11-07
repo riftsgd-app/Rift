@@ -1,10 +1,6 @@
-*.apk
-*.idsig
 *.jks
 *.keystore
-*.so
 build/
-gd_src/
-Dobby/
-And64/
-syms.h
+*.apk
+*.so
+*.rift

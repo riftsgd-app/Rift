@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "mods": [
+    {"id": "pulse.soundboard", "name": "Soundboard", "author": "Pulse", "description": "Trigger custom sounds on jumps and deaths."},
+    {"id": "echo.macropad", "name": "Macro Pad", "author": "echo", "description": "Record and replay inputs for testing sections."},
+    {"id": "nova.iconstudio", "name": "Icon Studio", "author": "Nova", "description": "Recolor and preview every icon in one menu."},
+    {"id": "vex.framestepper", "name": "Frame Stepper", "author": "vex", "description": "Step through any attempt one frame at a time."},
+    {"id": "kiro.practiceplus", "name": "Practice+", "author": "kiro", "description": "Better checkpoints and run stats for practice mode."},
+    {"id": "lumen.neontrails", "name": "Neon Trails", "author": "Lumen", "description": "Glowing trails that follow your icon."}
+  ]
+}

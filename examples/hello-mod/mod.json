@@ -1,0 +1,9 @@
+{
+  "id": "rift.hello",
+  "name": "Hello Mod",
+  "version": "1.0.0",
+  "author": "Rift",
+  "description": "Contoh mod paling sederhana: nulis log pas menu utama kebuka.",
+  "api": 1,
+  "binary": "mod.so"
+}
