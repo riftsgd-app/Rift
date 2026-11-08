@@ -6,15 +6,14 @@ Mod loader and launcher for **Geometry Dash 2.2** on Android. Built for versions
 
 | Device | File |
 | --- | --- |
-| 64-bit (arm64, most phones) | [Rift-64bit.apk](https://github.com/riftsgd-app/rift/releases/latest/download/Rift-64bit.apk) |
-| 32-bit (armv7) | coming soon (planned for 1.1) |
+| 64-bit (arm64-v8a), recommended | [Rift-64bit.apk](../../releases/latest/download/Rift-64bit.apk) |
+| 32-bit (armeabi-v7a), experimental | [Rift-32bit.apk](../../releases/latest/download/Rift-32bit.apk) |
 
-All versions are on the [Releases](https://github.com/riftsgd-app/rift/releases) page.
+Pick the one that matches your Geometry Dash install. They share a package name, so only one can be installed at a time.
 
-1. Install Geometry Dash 2.2 (APK) on your phone.
-2. Install `Rift-64bit.apk` and open it.
-3. Tap **Launch**. The game starts inside Rift.
-4. In the GD main menu, tap the round Rift button (bottom row) to open the **Mod Manager**.
+## Built-in mods
+
+Turn these on or off in Settings, Rift Mods: FPS Monitor, Attempt Counter, Death Tracker, Best Run Tracker, Session Timer, Level Completion Stats.
 
 ## Features
 
