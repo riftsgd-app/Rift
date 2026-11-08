@@ -38,6 +38,7 @@ public class GameLoader {
         out.close();
         in.close();
         try { RiftArt.generate(dir); } catch (Throwable t) { }
+        try { RiftDirs.ensure(c); } catch (Throwable t) { }
         // cocos baca aset dari sourceDir -> arahkan ke APK GD
         me.sourceDir = gd.sourceDir;
         // aset Java (suara dll): tambahkan APK GD ke resources activity

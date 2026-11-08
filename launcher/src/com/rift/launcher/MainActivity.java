@@ -252,7 +252,7 @@ public class MainActivity extends Activity {
         cardLp.topMargin = dp(36);
         root.addView(card, cardLp);
 
-        TextView foot = text("Rift Launcher 0.5.10", 12, DIM, false);
+        TextView foot = text("Rift Launcher 0.5.12", 12, DIM, false);
         foot.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams footLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         footLp.topMargin = dp(28);

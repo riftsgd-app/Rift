@@ -6,6 +6,8 @@ extern "C" int __android_log_print(int prio, const char *tag, const char *fmt, .
 extern "C" void A64HookFunction(void *const symbol, void *const replace, void **result);
 #define LOGI(...) __android_log_print(4, "Rift", __VA_ARGS__)
 #define RIFT_DIR "/data/user/0/com.rift.launcher/files/"
+#include "riftmods.h"
+#include "riftnet.h"
 
 struct Color3B { unsigned char r, g, b; };
 struct Size2 { float w, h; Size2() : w(0), h(0) {} Size2(const Size2 &o) : w(o.w), h(o.h) {} };
@@ -97,9 +99,16 @@ typedef void *(*RunFn)(void *, void *);
 typedef void *(*FadeToFn)(float, unsigned char);
 
 static void *g_winA, *g_winB;
+static void *g_cards, *g_empty;
+static int g_tab;
+static void *g_sprOn[8], *g_sprOff[8];
+static SetVisFn g_remFP;
+static void *g_bcards, *g_restart;
+static bool g_pending, g_catLoaded;
+static bool g_catFail[32];
 static bool g_open;
 static int g_press;
-static float g_cx, g_cy, g_sp;
+static float g_cx, g_cy, g_sp, g_S;
 static TouchLocFn g_touchLoc;
 static AnyObjFn g_anyObj;
 static TouchFn g_oB, g_oM, g_oE, g_oC;
@@ -115,16 +124,140 @@ static void closeOverlay() {
     if (g_overlay && g_setVis) g_setVis(g_overlay, false);
 }
 
-static void onTabA(void *self, void *sender) {
-    if (g_setVis && g_winA && g_winB) { g_setVis(g_winA, true); g_setVis(g_winB, false); }
+static void asciiCopy(char *dst, const char *src, int max) {
+    int n = 0;
+    for (; src[n] && n < max - 1; n++) {
+        unsigned char ch = (unsigned char) src[n];
+        dst[n] = (ch >= 32 && ch < 127) ? (char) ch : '?';
+    }
+    dst[n] = 0;
 }
 
+// label bigFont, dipas-in ke kotak maxW x maxH (poin). align: 0 kiri, 1 kanan, 2 tengah
+static void fitLabel(void *parent, const char *txt, float x, float y, float maxW, float maxH, int align, Color3B col) {
+    if (!g_label || !g_cSize) return;
+    char t[160];
+    asciiCopy(t, txt, sizeof t);
+    void *l = g_label(t, "bigFont.fnt");
+    if (!l) return;
+    const Size2 *cs = g_cSize(l);
+    float w = (cs && cs->w > 1.0f) ? cs->w : 100.0f, h = (cs && cs->h > 1.0f) ? cs->h : 40.0f;
+    float s = maxW / w;
+    if (maxH / h < s) s = maxH / h;
+    if (g_setScale) g_setScale(l, s);
+    if (g_setColor) g_setColor(l, col);
+    float px = x;
+    if (align == 0) px = x + w * s / 2.0f;
+    else if (align == 1) px = x - w * s / 2.0f;
+    g_setPos(l, px, y);
+    g_addChild(parent, l);
+}
+
+static float lx(float rx);
+static float ly(float ry);
+
+static void showTab() {
+    if (!g_setVis) return;
+    int n = mods_count();
+    if (g_winA) g_setVis(g_winA, g_tab == 0);
+    if (g_winB) g_setVis(g_winB, g_tab == 1);
+    if (g_cards) g_setVis(g_cards, g_tab == 0);
+    if (g_bcards) g_setVis(g_bcards, g_tab == 1);
+    if (g_restart) g_setVis(g_restart, g_pending);
+    if (g_empty) g_setVis(g_empty, g_tab == 0 && n == 0);
+}
+
+static void rebuildCards() {
+    if (!g_overlay || !g_node) return;
+    if (g_cards) {
+        if (g_remFP) g_remFP(g_cards, true);
+        else if (g_setVis) g_setVis(g_cards, false);
+        g_cards = nullptr;
+    }
+    int n = mods_scan();
+    void *cont = g_node();
+    if (!cont) return;
+    int shown = n > 6 ? 6 : n;
+    Color3B white = {255, 255, 255}, lav = {169, 154, 255}, soft = {205, 205, 222};
+    for (int i = 0; i < shown; i++) {
+        ModInfo *m = mods_get(i);
+        if (!m) continue;
+        float dx = 52.0f + (i % 2) * 456.0f, dy = 300.0f + (i / 2) * 82.0f;
+        float S = g_S;
+        void *on = mkSprite("rift_card_on.png");
+        void *off = mkSprite("rift_card_off.png");
+        if (on) { g_setScale(on, S); g_setPos(on, lx(dx + 220.0f), ly(dy + 36.0f)); g_addChild(cont, on); }
+        if (off) { g_setScale(off, S); g_setPos(off, lx(dx + 220.0f), ly(dy + 36.0f)); g_addChild(cont, off); }
+        g_sprOn[i] = on; g_sprOff[i] = off;
+        if (g_setVis) { if (on) g_setVis(on, m->enabled); if (off) g_setVis(off, !m->enabled); }
+        fitLabel(cont, m->name, lx(dx + 72.0f), ly(dy + 24.0f), 200.0f * g_sp, 26.0f * g_sp, 0, white);
+        char by[80];
+        snprintf(by, sizeof by, "by %s", m->author[0] ? m->author : "?");
+        fitLabel(cont, by, lx(dx + 426.0f), ly(dy + 24.0f), 120.0f * g_sp, 17.0f * g_sp, 1, lav);
+        fitLabel(cont, m->desc[0] ? m->desc : "No description", lx(dx + 72.0f), ly(dy + 52.0f), 285.0f * g_sp, 15.0f * g_sp, 0, soft);
+    }
+    if (n > 0 && !g_pending) fitLabel(cont, "Changes apply after restarting the game", lx(501.5f), ly(553.0f), 460.0f * g_sp, 13.0f * g_sp, 2, lav);
+    g_addChild(g_overlay, cont);
+    g_cards = cont;
+    showTab();
+}
+
+static void rebuildBrowse() {
+    if (!g_overlay || !g_node) return;
+    if (g_bcards) {
+        if (g_remFP) g_remFP(g_bcards, true);
+        else if (g_setVis) g_setVis(g_bcards, false);
+        g_bcards = nullptr;
+    }
+    int n = cat_count();
+    void *cont = g_node();
+    if (!cont) return;
+    int shown = n > 6 ? 6 : n;
+    Color3B white = {255, 255, 255}, lav = {169, 154, 255}, soft = {205, 205, 222};
+    for (int i = 0; i < shown; i++) {
+        CatInfo *c = cat_get(i);
+        if (!c) continue;
+        float dx = 52.0f + (i % 2) * 456.0f, dy = 300.0f + (i / 2) * 82.0f;
+        void *bc = mkSprite("rift_bcard.png");
+        if (bc) { g_setScale(bc, g_S); g_setPos(bc, lx(dx + 220.0f), ly(dy + 36.0f)); g_addChild(cont, bc); }
+        fitLabel(cont, c->name, lx(dx + 72.0f), ly(dy + 24.0f), 190.0f * g_sp, 26.0f * g_sp, 0, white);
+        char by[80];
+        snprintf(by, sizeof by, "by %s", c->author[0] ? c->author : "?");
+        fitLabel(cont, by, lx(dx + 426.0f), ly(dy + 24.0f), 110.0f * g_sp, 17.0f * g_sp, 1, lav);
+        fitLabel(cont, c->desc[0] ? c->desc : "No description", lx(dx + 72.0f), ly(dy + 52.0f), 262.0f * g_sp, 15.0f * g_sp, 0, soft);
+        const char *txt = "Download";
+        bool violet = true;
+        if (!c->url[0]) { txt = "Soon"; violet = false; }
+        else if (cat_installed(i)) { txt = "Installed"; violet = false; }
+        else if (g_catFail[i]) { txt = "Retry"; }
+        void *pl = mkSprite(violet ? "rift_pill_v.png" : "rift_pill_g.png");
+        if (pl) { g_setScale(pl, g_S); g_setPos(pl, lx(dx + 386.0f), ly(dy + 51.0f)); g_addChild(cont, pl); }
+        fitLabel(cont, txt, lx(dx + 386.0f), ly(dy + 51.0f), 66.0f * g_sp, 14.0f * g_sp, 2, white);
+    }
+    g_addChild(g_overlay, cont);
+    g_bcards = cont;
+    showTab();
+}
+
+static void onTabA(void *self, void *sender) { g_tab = 0; showTab(); }
 static void onTabB(void *self, void *sender) {
-    if (g_setVis && g_winA && g_winB) { g_setVis(g_winA, false); g_setVis(g_winB, true); }
+    g_tab = 1;
+    if (!g_catLoaded) { g_catLoaded = true; cat_fetch(); rebuildBrowse(); }
+    showTab();
 }
-
 static void onRefresh(void *self, void *sender) {
     LOGI("Refresh ditekan");
+    if (g_tab == 0) rebuildCards();
+    else { cat_fetch(); g_catLoaded = true; rebuildBrowse(); }
+}
+
+static void doDownload(int i) {
+    CatInfo *c = cat_get(i);
+    if (!c || !c->url[0] || cat_installed(i)) return;
+    const char *err = cat_download(i);
+    if (err) { g_catFail[i] = true; LOGI("download %s gagal: %s", c->id, err); }
+    else { g_catFail[i] = false; g_pending = true; LOGI("download %s ok", c->id); rebuildCards(); }
+    rebuildBrowse();
 }
 
 // ---- sentuhan: dicegat langsung di CCTouchDispatcher::touches, tidak tergantung CCMenu ----
@@ -140,6 +273,19 @@ static int hitTest(float x, float y) {
     if (inR(x, y, 52, 160, 311, 210, pad)) return 2;
     if (inR(x, y, 326, 160, 537, 210, pad)) return 3;
     if (inR(x, y, 790, 228, 948, 279, pad)) return 4;
+    if (g_pending && inR(x, y, 386.5f, 539.0f, 616.5f, 569.0f, 3.0f * g_sp)) return 20;
+    if (g_tab == 1) {
+        int n = cat_count();
+        if (n > 6) n = 6;
+        for (int i = 0; i < n; i++)
+            if (inR(x, y, 52.0f + (i % 2) * 456.0f + 346.0f, 300.0f + (i / 2) * 82.0f + 38.0f, 52.0f + (i % 2) * 456.0f + 426.0f, 300.0f + (i / 2) * 82.0f + 64.0f, 5.0f * g_sp)) return 30 + i;
+    }
+    if (g_tab == 0) {
+        int n = mods_count();
+        if (n > 6) n = 6;
+        for (int i = 0; i < n; i++)
+            if (inR(x, y, 52.0f + (i % 2) * 456.0f, 300.0f + (i / 2) * 82.0f, 492.0f + (i % 2) * 456.0f, 372.0f + (i / 2) * 82.0f, 0)) return 10 + i;
+    }
     if (inR(x, y, 16, 15, 985, 571, 0)) return 5;
     return 6;
 }
@@ -148,6 +294,17 @@ static void doAction(int a) {
     else if (a == 2) onTabA(nullptr, nullptr);
     else if (a == 3) onTabB(nullptr, nullptr);
     else if (a == 4) onRefresh(nullptr, nullptr);
+    else if (a == 20) riftnet_restart();
+    else if (a >= 30) doDownload(a - 30);
+    else if (a >= 10) {
+        int i = a - 10;
+        if (mods_get(i)) {
+            mods_toggle(i);
+            g_pending = true;
+            rebuildCards();
+            showTab();
+        }
+    }
 }
 static bool handleTouch(void *set, int phase) {
     if (!g_open || !g_anyObj || !g_touchLoc || !set) return false;
@@ -174,6 +331,7 @@ static void installExtra(void *h) {
     g_ease     = (Act1Fn)     sym2(h, "_ZN7cocos2d15CCEaseSineInOut6createEPNS_16CCActionIntervalE", nullptr);
     g_run      = (RunFn)      sym2(h, "_ZN7cocos2d6CCNode9runActionEPNS_8CCActionE", nullptr);
     g_fadeTo   = (FadeToFn)   sym2(h, "_ZN7cocos2d6CCFadeTo6createEfh", nullptr);
+    g_remFP    = (SetVisFn)   sym2(h, "_ZN7cocos2d6CCNode27removeFromParentAndCleanupEb", nullptr);
     void *t = dlsym(h, "_ZN7cocos2d17CCTouchDispatcher7touchesEPNS_5CCSetEPNS_7CCEventEj");
     if (!t) LOGI("simbol hilang: CCTouchDispatcher::touches");
     LOGI("extra: touch=%d anim=%d", t != nullptr, g_moveBy != nullptr);
@@ -251,6 +409,8 @@ static void buildOverlay() {
     float F = 0.92f;                         // jendela = 92% tinggi layar
     float S = F * g_winH * csf / 709.5f;     // skala sprite jendela
     g_sp = F * g_winH / 556.0f;              // poin per unit desain
+    g_S = S;
+    g_tab = 0;
     LOGI("overlay: csf=%.2f S=%.3f sp=%.3f", csf, S, g_sp);
     void *dim = mkSprite("rift_dim.png");
     if (dim) {
@@ -273,6 +433,19 @@ static void buildOverlay() {
     if (g_winA) { g_setScale(g_winA, S); g_setPos(g_winA, cx, cy); g_addChild(root, g_winA); }
     if (g_winB) { g_setScale(g_winB, S); g_setPos(g_winB, cx, cy); g_addChild(root, g_winB); if (g_setVis) g_setVis(g_winB, false); }
 
+    g_empty = mkSprite("rift_empty.png");
+    if (g_empty) { g_setScale(g_empty, S); g_setPos(g_empty, cx, cy); g_addChild(root, g_empty); }
+
+    g_restart = g_node();
+    if (g_restart) {
+        void *rb = mkSprite("rift_btn_restart.png");
+        if (rb) { g_setScale(rb, S); g_setPos(rb, lx(501.5f), ly(554.0f)); g_addChild(g_restart, rb); }
+        Color3B wh = {255, 255, 255};
+        fitLabel(g_restart, "Restart game", lx(501.5f), ly(554.0f), 190.0f * g_sp, 16.0f * g_sp, 2, wh);
+        g_addChild(root, g_restart);
+        if (g_setVis) g_setVis(g_restart, g_pending);
+    }
+
     void *menu = g_menu();
     if (menu) {
         g_setPos(menu, 0.0f, 0.0f);
@@ -289,6 +462,7 @@ static void buildOverlay() {
     g_overlay = root;
     g_open = true;
     g_press = 0;
+    rebuildCards();
 }
 
 static void onRiftButton(void *self, void *sender) {
@@ -296,9 +470,12 @@ static void onRiftButton(void *self, void *sender) {
     if (!g_overlay) buildOverlay();
     else {
         if (g_setVis) g_setVis(g_overlay, true);
-        onTabA(nullptr, nullptr);
+        g_tab = 0;
         g_open = true;
         g_press = 0;
+        rebuildCards();
+        if (g_bcards) rebuildBrowse();
+        showTab();
     }
 }
 
@@ -375,7 +552,7 @@ static bool hkMenuInit(void *self) {
     bool ok = g_origInit(self);
     if (!ok) return ok;
     g_layer = self;
-    g_overlay = nullptr; g_open = false; g_winA = g_winB = nullptr;
+    g_overlay = nullptr; g_open = false; g_winA = g_winB = g_cards = g_empty = g_bcards = g_restart = nullptr;
     if (g_shared && g_winSize) {
         void *dir = g_shared();
         if (dir) {
@@ -437,4 +614,5 @@ __attribute__((constructor)) static void rift_main() {
     if (!target) { LOGI("MenuLayer::init tidak ketemu"); return; }
     A64HookFunction(target, (void *)hkMenuInit, (void **)&g_origInit);
     LOGI("Hook MenuLayer::init terpasang");
+    mods_init(h); mods_scan(); mods_load_enabled();
 }

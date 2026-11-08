@@ -44,6 +44,8 @@ public class RiftArt {
         blank(new File(dir, "rift_hit_refresh.png"), Math.round(158 * K), Math.round(51 * K));
         blank(new File(dir, "rift_hit_close.png"), Math.round(52 * K), Math.round(52 * K));
         RiftArt2.extra(dir);
+        RiftArt4.extra(dir);
+        RiftArt5.extra(dir);
     }
 
     static void text(Canvas c, String s, float x, float y, float size, int color, boolean bold, float spacing, Paint.Align al) {
@@ -168,10 +170,7 @@ public class RiftArt {
 
         // isi
         if (!browse) {
-            text(c, "Belum ada mod terpasang", 501, 428, 27, 0xCCFFFFFF, false, 0f, Paint.Align.CENTER);
-            text(c, "Taruh file .rift di folder mods lalu tekan Refresh", 501, 466, 20, 0xFFB5A9FF, false, 0f, Paint.Align.CENTER);
         } else {
-            RiftArt3.browse(c);
         }
         save(b, f);
     }
