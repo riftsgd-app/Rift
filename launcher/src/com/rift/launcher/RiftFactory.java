@@ -21,6 +21,7 @@ public class RiftFactory extends AppComponentFactory {
                 } catch (Throwable t) {
                     Log.e("Rift", "boot gagal", t);
                 }
+                try { gl.loadClass("com.rift.launcher.RiftNet").getMethod("setActivity", Activity.class).invoke(null, a); } catch (Throwable t) { }
                 return a;
             }
         }

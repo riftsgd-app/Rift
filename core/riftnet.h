@@ -8,3 +8,5 @@ int cat_fetch();
 bool cat_installed(int i);
 const char *cat_download(int i);
 void riftnet_restart();
+void riftnet_ui(const char *cmd);
+bool riftnet_poll(char *out, int n);

@@ -77,6 +77,10 @@ public class RiftNet {
         }
     }
 
+    public static void setActivity(android.app.Activity a) { RiftUi.game = a; }
+    public static String ui(String c) { return RiftUi.ui(c); }
+    public static String poll(String x) { return RiftUi.poll(); }
+
     // tutup game; coba buka lagi launcher Rift sebentar lagi
     public static void restart() {
         try {

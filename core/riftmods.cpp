@@ -288,6 +288,7 @@ bool mods_toggle(int i) {
 }
 
 void mods_load_enabled() {
+    { FILE *sf = fopen(MEDIA_DIR "config/safe.txt", "rb"); if (sf) { fclose(sf); mlog("safe mode aktif: mod tidak dimuat"); return; } }
     for (int i = 0; i < g_n; i++) {
         ModInfo *m = &g_mods[i];
         if (!m->enabled || m->loaded) continue;

@@ -2,6 +2,9 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
+#include <link.h>
+#include <elf.h>
+#include <sys/mman.h>
 extern "C" int __android_log_print(int prio, const char *tag, const char *fmt, ...);
 extern "C" void A64HookFunction(void *const symbol, void *const replace, void **result);
 #define LOGI(...) __android_log_print(4, "Rift", __VA_ARGS__)
@@ -98,29 +101,61 @@ typedef void *(*Act1Fn)(void *);
 typedef void *(*RunFn)(void *, void *);
 typedef void *(*FadeToFn)(float, unsigned char);
 
-static void *g_winA, *g_winB;
-static void *g_cards, *g_empty;
-static int g_tab;
-static void *g_sprOn[8], *g_sprOff[8];
+struct Rect4 { float x, y, w, h; };
+typedef void (*OpacityFn)(void *, unsigned char);
+typedef void (*SchedFn)(void *, float);
+typedef void *(*SpriteRectFn)(const char *, const Rect4 &);
+struct Card { void *node; float cx, cy, birth, cur; bool shown; };
+
+static void *g_winA, *g_winB, *g_cards, *g_bcards, *g_empty, *g_restart, *g_hint;
+static void *g_mTopA, *g_mTopB, *g_mBot, *g_dim;
+static void *g_orb[3];
+static float g_orbX[3], g_orbY[3], g_orbS[3];
+static void *g_sprOn[32], *g_sprOff[32];
 static SetVisFn g_remFP;
-static void *g_bcards, *g_restart;
-static bool g_pending, g_catLoaded;
+static OpacityFn g_setOp;
+static SpriteRectFn g_spriteRect;
+static SchedFn g_oSched;
+static bool g_tickOK;
+static int g_tab, g_press, g_anim, g_pressCard = -1, g_pressTab;
+static bool g_open, g_pending, g_catLoaded, g_drag, g_dragArea;
 static bool g_catFail[32];
-static bool g_open;
-static int g_press;
-static float g_cx, g_cy, g_sp, g_S;
+static float g_cx, g_cy, g_sp, g_S, g_csf;
+static float g_time, g_animT, g_restartT0 = -100.0f;
+static float g_sc[2], g_vel[2], g_maxSc[2];
+static float g_dragY0, g_dragSc0, g_lastT, g_dragV;
+static Card g_cd[2][32];
+static int g_cn2[2];
 static TouchLocFn g_touchLoc;
 static AnyObjFn g_anyObj;
 static TouchFn g_oB, g_oM, g_oE, g_oC;
-static MoveByFn g_moveBy;
-static Seq2Fn g_seq;
-static Act1Fn g_rep, g_ease;
-static RunFn g_run;
-static FadeToFn g_fadeTo;
+static char g_query[48];
+static int g_map[2][32];
+static float g_holdT0, g_pollT;
+static int g_holdSlot = -1;
+static bool g_holdFired;
+static void *g_qlabel;
+
+static float easeOutBack(float t) {
+    float c1 = 1.70158f, c3 = c1 + 1.0f, u = t - 1.0f;
+    return 1.0f + c3 * u * u * u + c1 * u * u;
+}
+static void pivotScale(void *n, float cx, float cy, float s) {
+    if (!n) return;
+    g_setScale(n, s);
+    g_setPos(n, cx * (1.0f - s), cy * (1.0f - s));
+}
+static float lx(float rx) { return g_cx + (rx - 501.5f) * g_sp; }
+static float ly(float ry) { return g_cy + (294.0f - ry) * g_sp; }
 
 static void closeOverlay() {
-    g_open = false;
     g_press = 0;
+    g_pressCard = -1;
+    if (g_tickOK && g_overlay) {
+        if (g_anim != 2) { g_anim = 2; g_animT = 0.0f; }
+        return;
+    }
+    g_open = false;
     if (g_overlay && g_setVis) g_setVis(g_overlay, false);
 }
 
@@ -153,96 +188,198 @@ static void fitLabel(void *parent, const char *txt, float x, float y, float maxW
     g_addChild(parent, l);
 }
 
-static float lx(float rx);
-static float ly(float ry);
+static void addZ(void *parent, void *child, int z) {
+    if (g_addChildZ) g_addChildZ(parent, child, z); else g_addChild(parent, child);
+}
 
 static void showTab() {
     if (!g_setVis) return;
     int n = mods_count();
     if (g_winA) g_setVis(g_winA, g_tab == 0);
     if (g_winB) g_setVis(g_winB, g_tab == 1);
+    if (g_mTopA) g_setVis(g_mTopA, g_tab == 0);
+    if (g_mTopB) g_setVis(g_mTopB, g_tab == 1);
     if (g_cards) g_setVis(g_cards, g_tab == 0);
     if (g_bcards) g_setVis(g_bcards, g_tab == 1);
     if (g_restart) g_setVis(g_restart, g_pending);
+    if (g_hint) g_setVis(g_hint, g_tab == 0);
     if (g_empty) g_setVis(g_empty, g_tab == 0 && n == 0);
+}
+
+static void applyScroll(int t) {
+    void *node = t ? g_bcards : g_cards;
+    if (node) g_setPos(node, 0.0f, g_sc[t] * g_sp);
+}
+
+static void dropNode(void **n) {
+    if (!*n) return;
+    if (g_remFP) g_remFP(*n, true);
+    else if (g_setVis) g_setVis(*n, false);
+    *n = nullptr;
+}
+
+static void refreshHint() {
+    dropNode(&g_hint);
+    if (!g_overlay || !g_node || g_pending || mods_count() == 0) return;
+    void *h = g_node();
+    if (!h) return;
+    Color3B lav = {169, 154, 255};
+    fitLabel(h, "Tap to toggle  -  hold to remove", lx(501.5f), ly(554.0f), 460.0f * g_sp, 13.0f * g_sp, 2, lav);
+    addZ(g_overlay, h, 6);
+    g_hint = h;
+    showTab();
+}
+
+static bool hasQ(const char *s) {
+    if (!g_query[0]) return true;
+    int ql = (int) strlen(g_query);
+    for (int i = 0; s && s[i]; i++) {
+        int j = 0;
+        while (j < ql && s[i + j]) {
+            char a = s[i + j], b = g_query[j];
+            if (a >= 'A' && a <= 'Z') a += 32;
+            if (b >= 'A' && b <= 'Z') b += 32;
+            if (a != b) break;
+            j++;
+        }
+        if (j == ql) return true;
+    }
+    return false;
+}
+static bool matchQ(const char *a, const char *b, const char *c) { return hasQ(a) || hasQ(b) || hasQ(c); }
+
+static void updateQuery() {
+    dropNode(&g_qlabel);
+    if (!g_overlay || !g_node || !g_query[0]) return;
+    void *h = g_node();
+    if (!h) return;
+    char t[80];
+    snprintf(t, sizeof t, "Filter: %s", g_query);
+    Color3B lav = {169, 154, 255};
+    fitLabel(h, t, lx(760.0f), ly(253.5f), 300.0f * g_sp, 17.0f * g_sp, 1, lav);
+    addZ(g_overlay, h, 6);
+    g_qlabel = h;
+}
+
+// siapkan kartu ke-i: node sendiri (buat animasi) di dalam wadah
+static void *newCard(void *cont, int t, int i, float dx, float dy) {
+    void *cn = g_node();
+    if (!cn) return nullptr;
+    g_addChild(cont, cn);
+    Card *c = &g_cd[t][i];
+    c->node = cn;
+    c->cx = lx(dx + 220.0f);
+    c->cy = ly(dy + 36.0f);
+    c->birth = g_time + i * 0.04f;
+    c->cur = 1.0f;
+    c->shown = !g_tickOK;
+    if (g_tickOK) { if (g_setVis) g_setVis(cn, false); pivotScale(cn, c->cx, c->cy, 0.8f); }
+    return cn;
+}
+
+static void finishList(int t, void *cont, int n) {
+    g_cn2[t] = n;
+    int rows = (n + 1) / 2;
+    float mx = 82.0f * rows - 246.0f;
+    g_maxSc[t] = mx > 0.0f ? mx : 0.0f;
+    if (g_sc[t] > g_maxSc[t]) g_sc[t] = g_maxSc[t];
+    if (g_sc[t] < 0.0f) g_sc[t] = 0.0f;
+    g_vel[t] = 0.0f;
+    addZ(g_overlay, cont, 4);
+    if (t) g_bcards = cont; else g_cards = cont;
+    applyScroll(t);
+    showTab();
 }
 
 static void rebuildCards() {
     if (!g_overlay || !g_node) return;
-    if (g_cards) {
-        if (g_remFP) g_remFP(g_cards, true);
-        else if (g_setVis) g_setVis(g_cards, false);
-        g_cards = nullptr;
-    }
+    dropNode(&g_cards);
     int n = mods_scan();
     void *cont = g_node();
     if (!cont) return;
-    int shown = n > 6 ? 6 : n;
     Color3B white = {255, 255, 255}, lav = {169, 154, 255}, soft = {205, 205, 222};
-    for (int i = 0; i < shown; i++) {
-        ModInfo *m = mods_get(i);
-        if (!m) continue;
+    int k = 0;
+    for (int r = 0; r < n && k < 32; r++) {
+        ModInfo *m = mods_get(r);
+        if (!m || !matchQ(m->name, m->author, m->desc)) continue;
+        int i = k++;
+        g_map[0][i] = r;
         float dx = 52.0f + (i % 2) * 456.0f, dy = 300.0f + (i / 2) * 82.0f;
-        float S = g_S;
+        void *cn = newCard(cont, 0, i, dx, dy);
+        if (!cn) continue;
         void *on = mkSprite("rift_card_on.png");
         void *off = mkSprite("rift_card_off.png");
-        if (on) { g_setScale(on, S); g_setPos(on, lx(dx + 220.0f), ly(dy + 36.0f)); g_addChild(cont, on); }
-        if (off) { g_setScale(off, S); g_setPos(off, lx(dx + 220.0f), ly(dy + 36.0f)); g_addChild(cont, off); }
+        if (on) { g_setScale(on, g_S); g_setPos(on, lx(dx + 220.0f), ly(dy + 36.0f)); g_addChild(cn, on); }
+        if (off) { g_setScale(off, g_S); g_setPos(off, lx(dx + 220.0f), ly(dy + 36.0f)); g_addChild(cn, off); }
         g_sprOn[i] = on; g_sprOff[i] = off;
         if (g_setVis) { if (on) g_setVis(on, m->enabled); if (off) g_setVis(off, !m->enabled); }
-        fitLabel(cont, m->name, lx(dx + 72.0f), ly(dy + 24.0f), 200.0f * g_sp, 26.0f * g_sp, 0, white);
+        fitLabel(cn, m->name, lx(dx + 72.0f), ly(dy + 24.0f), 200.0f * g_sp, 26.0f * g_sp, 0, white);
         char by[80];
         snprintf(by, sizeof by, "by %s", m->author[0] ? m->author : "?");
-        fitLabel(cont, by, lx(dx + 426.0f), ly(dy + 24.0f), 120.0f * g_sp, 17.0f * g_sp, 1, lav);
-        fitLabel(cont, m->desc[0] ? m->desc : "No description", lx(dx + 72.0f), ly(dy + 52.0f), 285.0f * g_sp, 15.0f * g_sp, 0, soft);
+        fitLabel(cn, by, lx(dx + 426.0f), ly(dy + 24.0f), 120.0f * g_sp, 17.0f * g_sp, 1, lav);
+        fitLabel(cn, m->desc[0] ? m->desc : "No description", lx(dx + 72.0f), ly(dy + 52.0f), 285.0f * g_sp, 15.0f * g_sp, 0, soft);
     }
-    if (n > 0 && !g_pending) fitLabel(cont, "Changes apply after restarting the game", lx(501.5f), ly(553.0f), 460.0f * g_sp, 13.0f * g_sp, 2, lav);
-    g_addChild(g_overlay, cont);
-    g_cards = cont;
-    showTab();
+    finishList(0, cont, k);
+    refreshHint();
+    updateQuery();
 }
 
 static void rebuildBrowse() {
     if (!g_overlay || !g_node) return;
-    if (g_bcards) {
-        if (g_remFP) g_remFP(g_bcards, true);
-        else if (g_setVis) g_setVis(g_bcards, false);
-        g_bcards = nullptr;
-    }
+    dropNode(&g_bcards);
     int n = cat_count();
     void *cont = g_node();
     if (!cont) return;
-    int shown = n > 6 ? 6 : n;
     Color3B white = {255, 255, 255}, lav = {169, 154, 255}, soft = {205, 205, 222};
-    for (int i = 0; i < shown; i++) {
-        CatInfo *c = cat_get(i);
-        if (!c) continue;
+    int k = 0;
+    for (int r = 0; r < n && k < 32; r++) {
+        CatInfo *c = cat_get(r);
+        if (!c || !matchQ(c->name, c->author, c->desc)) continue;
+        int i = k++;
+        g_map[1][i] = r;
         float dx = 52.0f + (i % 2) * 456.0f, dy = 300.0f + (i / 2) * 82.0f;
+        void *cn = newCard(cont, 1, i, dx, dy);
+        if (!cn) continue;
         void *bc = mkSprite("rift_bcard.png");
-        if (bc) { g_setScale(bc, g_S); g_setPos(bc, lx(dx + 220.0f), ly(dy + 36.0f)); g_addChild(cont, bc); }
-        fitLabel(cont, c->name, lx(dx + 72.0f), ly(dy + 24.0f), 190.0f * g_sp, 26.0f * g_sp, 0, white);
+        if (bc) { g_setScale(bc, g_S); g_setPos(bc, lx(dx + 220.0f), ly(dy + 36.0f)); g_addChild(cn, bc); }
+        fitLabel(cn, c->name, lx(dx + 72.0f), ly(dy + 24.0f), 190.0f * g_sp, 26.0f * g_sp, 0, white);
         char by[80];
         snprintf(by, sizeof by, "by %s", c->author[0] ? c->author : "?");
-        fitLabel(cont, by, lx(dx + 426.0f), ly(dy + 24.0f), 110.0f * g_sp, 17.0f * g_sp, 1, lav);
-        fitLabel(cont, c->desc[0] ? c->desc : "No description", lx(dx + 72.0f), ly(dy + 52.0f), 262.0f * g_sp, 15.0f * g_sp, 0, soft);
+        fitLabel(cn, by, lx(dx + 426.0f), ly(dy + 24.0f), 110.0f * g_sp, 17.0f * g_sp, 1, lav);
+        fitLabel(cn, c->desc[0] ? c->desc : "No description", lx(dx + 72.0f), ly(dy + 52.0f), 262.0f * g_sp, 15.0f * g_sp, 0, soft);
         const char *txt = "Download";
         bool violet = true;
         if (!c->url[0]) { txt = "Soon"; violet = false; }
-        else if (cat_installed(i)) { txt = "Installed"; violet = false; }
-        else if (g_catFail[i]) { txt = "Retry"; }
+        else if (cat_installed(r)) { txt = "Installed"; violet = false; }
+        else if (g_catFail[r]) { txt = "Retry"; }
         void *pl = mkSprite(violet ? "rift_pill_v.png" : "rift_pill_g.png");
-        if (pl) { g_setScale(pl, g_S); g_setPos(pl, lx(dx + 386.0f), ly(dy + 51.0f)); g_addChild(cont, pl); }
-        fitLabel(cont, txt, lx(dx + 386.0f), ly(dy + 51.0f), 66.0f * g_sp, 14.0f * g_sp, 2, white);
+        if (pl) { g_setScale(pl, g_S); g_setPos(pl, lx(dx + 386.0f), ly(dy + 51.0f)); g_addChild(cn, pl); }
+        fitLabel(cn, txt, lx(dx + 386.0f), ly(dy + 51.0f), 66.0f * g_sp, 14.0f * g_sp, 2, white);
     }
-    g_addChild(g_overlay, cont);
-    g_bcards = cont;
-    showTab();
+    finishList(1, cont, k);
+    updateQuery();
 }
 
-static void onTabA(void *self, void *sender) { g_tab = 0; showTab(); }
+static void popCards(int t) {
+    for (int i = 0; i < g_cn2[t]; i++) {
+        Card *c = &g_cd[t][i];
+        c->birth = g_time + i * 0.035f;
+        c->shown = !g_tickOK;
+        if (g_tickOK && c->node) { if (g_setVis) g_setVis(c->node, false); pivotScale(c->node, c->cx, c->cy, 0.8f); }
+    }
+}
+
+static void onTabA(void *self, void *sender) {
+    if (g_tab == 0) return;
+    g_tab = 0;
+    popCards(0);
+    showTab();
+}
 static void onTabB(void *self, void *sender) {
+    if (g_tab == 1) return;
     g_tab = 1;
     if (!g_catLoaded) { g_catLoaded = true; cat_fetch(); rebuildBrowse(); }
+    else popCards(1);
     showTab();
 }
 static void onRefresh(void *self, void *sender) {
@@ -251,20 +388,26 @@ static void onRefresh(void *self, void *sender) {
     else { cat_fetch(); g_catLoaded = true; rebuildBrowse(); }
 }
 
+static void setPending() {
+    if (!g_pending) { g_pending = true; g_restartT0 = g_time; }
+}
+
 static void doDownload(int i) {
     CatInfo *c = cat_get(i);
     if (!c || !c->url[0] || cat_installed(i)) return;
     const char *err = cat_download(i);
     if (err) { g_catFail[i] = true; LOGI("download %s gagal: %s", c->id, err); }
-    else { g_catFail[i] = false; g_pending = true; LOGI("download %s ok", c->id); rebuildCards(); }
+    else { g_catFail[i] = false; setPending(); LOGI("download %s ok", c->id); rebuildCards(); }
     rebuildBrowse();
 }
 
 // ---- sentuhan: dicegat langsung di CCTouchDispatcher::touches, tidak tergantung CCMenu ----
-static float lx(float rx) { return g_cx + (rx - 501.5f) * g_sp; }
-static float ly(float ry) { return g_cy + (294.0f - ry) * g_sp; }
 static bool inR(float x, float y, float l, float t, float r, float b, float pad) {
     return x >= lx(l) - pad && x <= lx(r) + pad && y <= ly(t) + pad && y >= ly(b) - pad;
+}
+static bool inList(float x, float y) {
+    float yd = 294.0f - (y - g_cy) / g_sp, xd = 501.5f + (x - g_cx) / g_sp;
+    return yd >= 296.0f && yd <= 540.0f && xd >= 40.0f && xd <= 962.0f;
 }
 static int hitTest(float x, float y) {
     float pad = 6.0f * g_sp;
@@ -274,17 +417,13 @@ static int hitTest(float x, float y) {
     if (inR(x, y, 326, 160, 537, 210, pad)) return 3;
     if (inR(x, y, 790, 228, 948, 279, pad)) return 4;
     if (g_pending && inR(x, y, 386.5f, 539.0f, 616.5f, 569.0f, 3.0f * g_sp)) return 20;
-    if (g_tab == 1) {
-        int n = cat_count();
-        if (n > 6) n = 6;
-        for (int i = 0; i < n; i++)
-            if (inR(x, y, 52.0f + (i % 2) * 456.0f + 346.0f, 300.0f + (i / 2) * 82.0f + 38.0f, 52.0f + (i % 2) * 456.0f + 426.0f, 300.0f + (i / 2) * 82.0f + 64.0f, 5.0f * g_sp)) return 30 + i;
-    }
-    if (g_tab == 0) {
-        int n = mods_count();
-        if (n > 6) n = 6;
-        for (int i = 0; i < n; i++)
-            if (inR(x, y, 52.0f + (i % 2) * 456.0f, 300.0f + (i / 2) * 82.0f, 492.0f + (i % 2) * 456.0f, 372.0f + (i / 2) * 82.0f, 0)) return 10 + i;
+    if (inR(x, y, 52, 228, 772, 279, pad)) return 7;
+    if (inList(x, y)) {
+        for (int i = 0; i < g_cn2[g_tab]; i++) {
+            float l = 52.0f + (i % 2) * 456.0f, t = 300.0f + (i / 2) * 82.0f - g_sc[g_tab];
+            if (g_tab == 0) { if (inR(x, y, l, t, l + 440.0f, t + 72.0f, 0)) return 100 + i; }
+            else if (inR(x, y, l + 346.0f, t + 38.0f, l + 426.0f, t + 64.0f, 5.0f * g_sp)) return 200 + i;
+        }
     }
     if (inR(x, y, 16, 15, 985, 571, 0)) return 5;
     return 6;
@@ -295,49 +434,278 @@ static void doAction(int a) {
     else if (a == 3) onTabB(nullptr, nullptr);
     else if (a == 4) onRefresh(nullptr, nullptr);
     else if (a == 20) riftnet_restart();
-    else if (a >= 30) doDownload(a - 30);
-    else if (a >= 10) {
-        int i = a - 10;
-        if (mods_get(i)) {
-            mods_toggle(i);
-            g_pending = true;
-            rebuildCards();
+    else if (a == 7) { char cmd[80]; snprintf(cmd, sizeof cmd, "search:%s", g_query); riftnet_ui(cmd); }
+    else if (a >= 200) doDownload(g_map[1][(a - 200) & 31]);
+    else if (a >= 100) {
+        int i = (a - 100) & 31;
+        ModInfo *m = mods_get(g_map[0][i]);
+        if (m) {
+            mods_toggle(g_map[0][i]);
+            if (g_setVis) { if (g_sprOn[i]) g_setVis(g_sprOn[i], m->enabled); if (g_sprOff[i]) g_setVis(g_sprOff[i], !m->enabled); }
+            g_cd[0][i].cur = 0.88f;
+            setPending();
+            refreshHint();
             showTab();
         }
     }
+}
+static void setPressCard(int h) {
+    if (h >= 200) { g_pressCard = h - 200; g_pressTab = 1; }
+    else if (h >= 100) { g_pressCard = h - 100; g_pressTab = 0; }
+    else g_pressCard = -1;
 }
 static bool handleTouch(void *set, int phase) {
     if (!g_open || !g_anyObj || !g_touchLoc || !set) return false;
     void *t = g_anyObj(set);
     if (!t) return true;
+    if (g_anim == 2) return true;
     Pt2 p = g_touchLoc(t);
-    int h = hitTest(p.x, p.y);
-    if (phase == 0) g_press = h;
-    else if (phase == 2) { int pr = g_press; g_press = 0; if (pr == h) doAction(h); }
-    else if (phase == 3) g_press = 0;
+    int tb = g_tab;
+    if (phase == 0) {
+        g_press = hitTest(p.x, p.y);
+        g_drag = false;
+        g_dragArea = inList(p.x, p.y);
+        g_dragY0 = p.y;
+        g_dragSc0 = g_sc[tb];
+        g_vel[tb] = 0.0f;
+        g_lastT = g_time;
+        g_dragV = 0.0f;
+        setPressCard(g_press);
+        g_holdSlot = (g_tab == 0 && g_press >= 100 && g_press < 200) ? g_press - 100 : -1;
+        g_holdT0 = g_time;
+        g_holdFired = false;
+    } else if (phase == 1) {
+        if (g_dragArea) {
+            float dy = (p.y - g_dragY0) / g_sp;
+            if (!g_drag && (dy > 6.0f || dy < -6.0f)) { g_drag = true; g_press = 0; g_holdSlot = -1; setPressCard(0); }
+            if (g_drag) {
+                float sc = g_dragSc0 + dy, mx = g_maxSc[tb];
+                if (sc < 0.0f) sc *= 0.4f;
+                else if (sc > mx) sc = mx + (sc - mx) * 0.4f;
+                float dt = g_time - g_lastT;
+                if (dt > 0.001f) g_dragV = g_dragV * 0.6f + ((sc - g_sc[tb]) / dt) * 0.4f;
+                g_sc[tb] = sc;
+                g_lastT = g_time;
+                applyScroll(tb);
+            }
+        }
+    } else {
+        setPressCard(0);
+        g_holdSlot = -1;
+        if (g_drag) {
+            g_drag = false;
+            g_press = 0;
+            float v = (g_time - g_lastT > 0.12f) ? 0.0f : g_dragV;
+            if (v > 2500.0f) v = 2500.0f;
+            if (v < -2500.0f) v = -2500.0f;
+            g_vel[tb] = v;
+        } else if (phase == 2) {
+            int pr = g_press, h = hitTest(p.x, p.y);
+            g_press = 0;
+            if (pr == h) doAction(h);
+        } else g_press = 0;
+    }
     return true;
 }
+
+static void applyRoot(float s, float op) {
+    pivotScale(g_overlay, g_cx, g_cy, s);
+    if (g_setOp && g_dim) g_setOp(g_dim, (unsigned char) (op * 255.0f));
+}
+
+static void tick(float dt) {
+    if (dt > 0.1f) dt = 0.1f;
+    g_time += dt;
+    if (!g_overlay || !g_open) return;
+    if (g_anim) {
+        g_animT += dt;
+        float d = g_anim == 1 ? 0.30f : 0.18f, t = g_animT / d;
+        if (t > 1.0f) t = 1.0f;
+        if (g_anim == 1) {
+            float op = t * 1.6f;
+            applyRoot(0.85f + 0.15f * easeOutBack(t), op > 1.0f ? 1.0f : op);
+        } else applyRoot(1.0f - 0.08f * t * t, 1.0f - t);
+        if (t >= 1.0f) {
+            if (g_anim == 2) { g_open = false; if (g_setVis) g_setVis(g_overlay, false); }
+            g_anim = 0;
+            applyRoot(1.0f, 1.0f);
+        }
+    }
+    for (int i = 0; i < 3; i++) {
+        if (!g_orb[i]) continue;
+        g_setPos(g_orb[i], g_orbX[i] + sinf(g_time * (0.5f + 0.17f * i) + i * 2.1f) * 0.06f * g_winW,
+                 g_orbY[i] + cosf(g_time * (0.4f + 0.13f * i) + i) * 0.08f * g_winH);
+        g_setScale(g_orb[i], g_orbS[i] * (1.0f + 0.06f * sinf(g_time * 0.9f + i)));
+    }
+    int t = g_tab;
+    if (!g_drag) {
+        float mx = g_maxSc[t];
+        if (g_sc[t] < 0.0f || g_sc[t] > mx) {
+            float bound = g_sc[t] < 0.0f ? 0.0f : mx, step = dt * 12.0f;
+            g_sc[t] += (bound - g_sc[t]) * (step > 1.0f ? 1.0f : step);
+            g_vel[t] = 0.0f;
+            if (g_sc[t] - bound < 0.2f && bound - g_sc[t] < 0.2f) g_sc[t] = bound;
+            applyScroll(t);
+        } else if (g_vel[t] > 4.0f || g_vel[t] < -4.0f) {
+            g_sc[t] += g_vel[t] * dt;
+            g_vel[t] *= expf(-3.2f * dt);
+            applyScroll(t);
+        } else g_vel[t] = 0.0f;
+    }
+    for (int i = 0; i < g_cn2[t]; i++) {
+        Card *c = &g_cd[t][i];
+        if (!c->node) continue;
+        float age = g_time - c->birth;
+        if (age < 0.0f) continue;
+        float ctop = 300.0f + (i / 2) * 82.0f - g_sc[t];
+        if (ctop >= 538.0f || ctop + 72.0f <= 298.0f) { if (c->shown && g_setVis) g_setVis(c->node, false); c->shown = false; continue; }
+        if (!c->shown) { c->shown = true; if (g_setVis) g_setVis(c->node, true); }
+        float pop = age < 0.28f ? 0.8f + 0.2f * easeOutBack(age / 0.28f) : 1.0f;
+        float tgt = (g_pressCard == i && g_pressTab == t) ? 0.95f : 1.0f, step = dt * 16.0f;
+        c->cur += (tgt - c->cur) * (step > 1.0f ? 1.0f : step);
+        pivotScale(c->node, c->cx, c->cy, pop * c->cur);
+    }
+    if (g_holdSlot >= 0 && !g_drag && !g_holdFired && g_time - g_holdT0 > 0.7f) {
+        g_holdFired = true;
+        g_press = 0;
+        ModInfo *hm = mods_get(g_map[0][g_holdSlot & 31]);
+        if (hm) {
+            char base[160];
+            const char *d = hm->dir;
+            int dl = (int) strlen(d);
+            while (dl > 0 && d[dl - 1] == '/') dl--;
+            int st = dl;
+            while (st > 0 && d[st - 1] != '/') st--;
+            int len = dl - st;
+            if (len > 150) len = 150;
+            memcpy(base, d + st, len);
+            base[len] = 0;
+            for (int q = 0; q < 2; q++) { char *dash = strrchr(base, '-'); if (dash) *dash = 0; }
+            char cmd[200];
+            snprintf(cmd, sizeof cmd, "del:%s", base);
+            riftnet_ui(cmd);
+        }
+    }
+    g_pollT += dt;
+    if (g_pollT > 0.3f) {
+        g_pollT = 0.0f;
+        char r[96];
+        if (riftnet_poll(r, sizeof r)) {
+            if (r[0] == '=') {
+                snprintf(g_query, sizeof g_query, "%s", r + 1);
+                rebuildCards();
+                if (g_bcards) rebuildBrowse();
+            } else if (r[0] == '!') {
+                setPending();
+                rebuildCards();
+            }
+        }
+    }
+    if (g_restart && g_pending) {
+        float age = g_time - g_restartT0;
+        pivotScale(g_restart, lx(501.5f), ly(554.0f), age < 0.35f ? 0.6f + 0.4f * easeOutBack(age / 0.35f) : 1.0f + 0.025f * sinf(g_time * 4.0f));
+    }
+}
+
+// ---- save data: catat jalur file yang dibuka game, dan alihkan jalur GD asli ke folder data Rift ----
+typedef FILE *(*FopenFn)(const char *, const char *);
+typedef int (*OpenFn)(const char *, int, int);
+static FopenFn g_oFopen;
+static OpenFn g_oOpen;
+static int g_fileLog;
+static const char *redirPath(const char *p, char *buf, int n) {
+    static const char *pre[2] = { "/data/data/com.robtopx.geometryjump/", "/data/user/0/com.robtopx.geometryjump/" };
+    for (int i = 0; i < 2; i++) {
+        size_t l = strlen(pre[i]);
+        if (strncmp(p, pre[i], l) == 0) { snprintf(buf, n, "/data/user/0/com.rift.launcher/%s", p + l); return buf; }
+    }
+    return p;
+}
+static bool wantLog(const char *p) {
+    return g_fileLog < 80 && (strstr(p, ".dat") || strstr(p, "/data/")) && !strstr(p, "modcache") && !strstr(p, "rift_") && !strstr(p, "/proc/");
+}
+static FILE *hkFopen(const char *p, const char *m) {
+    if (!p) return g_oFopen(p, m);
+    char b[600];
+    const char *q = redirPath(p, b, sizeof b);
+    FILE *f = g_oFopen(q, m);
+    if (wantLog(p)) { g_fileLog++; LOGI("fopen %s [%s] -> %s%s", p, m ? m : "?", f ? "ok" : "GAGAL", q != p ? " (dialihkan)" : ""); }
+    return f;
+}
+static int hkOpen(const char *p, int fl, int mode) {
+    if (!p) return g_oOpen(p, fl, mode);
+    char b[600];
+    const char *q = redirPath(p, b, sizeof b);
+    int fd = g_oOpen(q, fl, mode);
+    if (wantLog(p)) { g_fileLog++; LOGI("open %s -> %s%s", p, fd >= 0 ? "ok" : "GAGAL", q != p ? " (dialihkan)" : ""); }
+    return fd;
+}
+struct GotCtx { unsigned long base; Elf64_Dyn *dyn; };
+static int gotCb(struct dl_phdr_info *info, size_t sz, void *d) {
+    GotCtx *c = (GotCtx *) d;
+    if (!info->dlpi_name || !strstr(info->dlpi_name, "libcocos2dcpp.so")) return 0;
+    c->base = (unsigned long) info->dlpi_addr;
+    for (int k = 0; k < info->dlpi_phnum; k++)
+        if (info->dlpi_phdr[k].p_type == PT_DYNAMIC) c->dyn = (Elf64_Dyn *) (info->dlpi_addr + info->dlpi_phdr[k].p_vaddr);
+    return 1;
+}
+static unsigned long gotAbs(unsigned long v, unsigned long base) { return v < base ? v + base : v; }
+static int gotPatch(GotCtx *c, const char *name, void *repl, void **orig) {
+    Elf64_Sym *sym = nullptr;
+    const char *str = nullptr;
+    Elf64_Rela *rel[2] = { nullptr, nullptr };
+    unsigned long relsz[2] = { 0, 0 };
+    for (Elf64_Dyn *d = c->dyn; d->d_tag != DT_NULL; d++) {
+        if (d->d_tag == DT_SYMTAB) sym = (Elf64_Sym *) gotAbs(d->d_un.d_ptr, c->base);
+        else if (d->d_tag == DT_STRTAB) str = (const char *) gotAbs(d->d_un.d_ptr, c->base);
+        else if (d->d_tag == DT_JMPREL) rel[0] = (Elf64_Rela *) gotAbs(d->d_un.d_ptr, c->base);
+        else if (d->d_tag == DT_PLTRELSZ) relsz[0] = d->d_un.d_val;
+        else if (d->d_tag == DT_RELA) rel[1] = (Elf64_Rela *) gotAbs(d->d_un.d_ptr, c->base);
+        else if (d->d_tag == DT_RELASZ) relsz[1] = d->d_un.d_val;
+    }
+    if (!sym || !str) return 0;
+    int n = 0;
+    for (int t = 0; t < 2; t++) {
+        if (!rel[t]) continue;
+        unsigned long cnt = relsz[t] / sizeof(Elf64_Rela);
+        for (unsigned long k = 0; k < cnt; k++) {
+            unsigned type = ELF64_R_TYPE(rel[t][k].r_info);
+            if (type != 1025 && type != 1026) continue;
+            Elf64_Sym *sy = &sym[ELF64_R_SYM(rel[t][k].r_info)];
+            if (strcmp(str + sy->st_name, name) != 0) continue;
+            void **slot = (void **) (c->base + rel[t][k].r_offset);
+            unsigned long pg = (unsigned long) slot & ~4095UL;
+            if (mprotect((void *) pg, 4096, PROT_READ | PROT_WRITE) != 0) continue;
+            if (!*orig) *orig = *slot;
+            *slot = repl;
+            n++;
+        }
+    }
+    return n;
+}
+static void riftFileHook() {
+    GotCtx c = { 0, nullptr };
+    dl_iterate_phdr(gotCb, &c);
+    if (!c.dyn) { LOGI("hook file: libcocos2dcpp tidak ketemu"); return; }
+    int a = gotPatch(&c, "fopen", (void *) hkFopen, (void **) &g_oFopen);
+    int b = gotPatch(&c, "open", (void *) hkOpen, (void **) &g_oOpen);
+    LOGI("hook file (GOT): fopen=%d open=%d", a, b);
+}
+
 static void hkTB(void *s, void *set, void *ev) { if (handleTouch(set, 0)) return; g_oB(s, set, ev); }
 static void hkTM(void *s, void *set, void *ev) { if (handleTouch(set, 1)) return; g_oM(s, set, ev); }
 static void hkTE(void *s, void *set, void *ev) { if (handleTouch(set, 2)) return; g_oE(s, set, ev); }
 static void hkTC(void *s, void *set, void *ev) { if (handleTouch(set, 3)) return; g_oC(s, set, ev); }
 
 static void installExtra(void *h) {
-    g_touchLoc = (TouchLocFn) sym2(h, "_ZNK7cocos2d7CCTouch11getLocationEv", "_ZN7cocos2d7CCTouch11getLocationEv");
-    g_anyObj   = (AnyObjFn)   sym2(h, "_ZN7cocos2d5CCSet9anyObjectEv", "_ZNK7cocos2d5CCSet9anyObjectEv");
-    g_moveBy   = (MoveByFn)   sym2(h, "_ZN7cocos2d8CCMoveBy6createEfRKNS_7CCPointE", nullptr);
-    g_seq      = (Seq2Fn)     sym2(h, "_ZN7cocos2d10CCSequence6createEPNS_18CCFiniteTimeActionEz", nullptr);
-    g_rep      = (Act1Fn)     sym2(h, "_ZN7cocos2d15CCRepeatForever6createEPNS_16CCActionIntervalE", nullptr);
-    g_ease     = (Act1Fn)     sym2(h, "_ZN7cocos2d15CCEaseSineInOut6createEPNS_16CCActionIntervalE", nullptr);
-    g_run      = (RunFn)      sym2(h, "_ZN7cocos2d6CCNode9runActionEPNS_8CCActionE", nullptr);
-    g_fadeTo   = (FadeToFn)   sym2(h, "_ZN7cocos2d6CCFadeTo6createEfh", nullptr);
-    g_remFP    = (SetVisFn)   sym2(h, "_ZN7cocos2d6CCNode27removeFromParentAndCleanupEb", nullptr);
-    void *t = dlsym(h, "_ZN7cocos2d17CCTouchDispatcher7touchesEPNS_5CCSetEPNS_7CCEventEj");
-    if (!t) LOGI("simbol hilang: CCTouchDispatcher::touches");
-    LOGI("extra: touch=%d anim=%d", t != nullptr, g_moveBy != nullptr);
+    g_touchLoc   = (TouchLocFn)   sym2(h, "_ZNK7cocos2d7CCTouch11getLocationEv", "_ZN7cocos2d7CCTouch11getLocationEv");
+    g_anyObj     = (AnyObjFn)     sym2(h, "_ZN7cocos2d5CCSet9anyObjectEv", "_ZNK7cocos2d5CCSet9anyObjectEv");
+    g_remFP      = (SetVisFn)     sym2(h, "_ZN7cocos2d6CCNode27removeFromParentAndCleanupEb", nullptr);
+    g_setOp      = (OpacityFn)    sym2(h, "_ZN7cocos2d8CCSprite10setOpacityEh", "_ZN7cocos2d9CCNodeRGBA10setOpacityEh");
+    g_spriteRect = (SpriteRectFn) sym2(h, "_ZN7cocos2d8CCSprite6createEPKcRKNS_7CCRectE", nullptr);
+    LOGI("extra: touch=%d opacity=%d rect=%d", g_touchLoc != nullptr, g_setOp != nullptr, g_spriteRect != nullptr);
 }
 
-static bool g_touchesHooked;
 typedef void (*TouchesFn)(void *, void *, void *, unsigned);
 static TouchesFn g_oTouches;
 static void hkTouches(void *s, void *set, void *ev, unsigned idx) {
@@ -348,13 +716,22 @@ static void hkTouches(void *s, void *set, void *ev, unsigned idx) {
     }
     g_oTouches(s, set, ev, idx);
 }
+static void hkSched(void *s, float dt) {
+    g_oSched(s, dt);
+    tick(dt);
+}
 static void hookTouches(void *h) {
     void *t = dlsym(h, "_ZN7cocos2d17CCTouchDispatcher7touchesEPNS_5CCSetEPNS_7CCEventEj");
     if (t && g_touchLoc && g_anyObj) {
         A64HookFunction(t, (void *) hkTouches, (void **) &g_oTouches);
-        g_touchesHooked = true;
         LOGI("hook touches terpasang");
-    }
+    } else LOGI("hook touches GAGAL");
+    void *sc = dlsym(h, "_ZN7cocos2d11CCScheduler6updateEf");
+    if (sc) {
+        A64HookFunction(sc, (void *) hkSched, (void **) &g_oSched);
+        g_tickOK = g_oSched != nullptr;
+        LOGI("hook scheduler terpasang (animasi aktif)");
+    } else LOGI("simbol hilang: CCScheduler::update (animasi mati)");
 }
 
 static void *addHit(void *menu, const char *file, float scale, void (*fn)(void *, void *), float x, float y) {
@@ -369,21 +746,17 @@ static void *addHit(void *menu, const char *file, float scale, void (*fn)(void *
     return it;
 }
 
-static void animOrb(void *o, float dx, float dy, float t, int lo, int hi) {
-    if (!o || !g_moveBy || !g_seq || !g_rep || !g_run) return;
-    Pt2 a, b;
-    a.x = dx; a.y = dy; b.x = -dx; b.y = -dy;
-    void *m1 = g_moveBy(t, a);
-    void *m2 = g_moveBy(t, b);
-    if (!m1 || !m2) return;
-    if (g_ease) { m1 = g_ease(m1); m2 = g_ease(m2); }
-    void *r = g_rep(g_seq(m1, m2, nullptr));
-    if (r) g_run(o, r);
-    if (g_fadeTo) {
-        void *f1 = g_fadeTo(t * 0.8f, (unsigned char) lo);
-        void *f2 = g_fadeTo(t * 0.8f, (unsigned char) hi);
-        if (f1 && f2) { void *fr = g_rep(g_seq(f1, f2, nullptr)); if (fr) g_run(o, fr); }
-    }
+// salinan bagian atas/bawah gambar jendela: nutup kartu yang ke-scroll keluar area daftar
+static void *mkMask(const char *file, float y0, float h) {
+    if (!g_spriteRect) return nullptr;
+    char path[256];
+    snprintf(path, sizeof path, RIFT_DIR "%s", file);
+    Rect4 r = { 0.0f, y0 / g_csf, 1280.0f / g_csf, h / g_csf };
+    void *s = g_spriteRect(path, r);
+    if (!s) return nullptr;
+    g_setScale(s, g_S);
+    g_setPos(s, g_cx, g_cy + (375.0f - (y0 + h / 2.0f)) / g_csf * g_S);
+    return s;
 }
 
 static void buildOverlay() {
@@ -398,7 +771,6 @@ static void buildOverlay() {
     float big = g_winW > g_winH ? g_winW : g_winH;
     g_winA = mkSprite("rift_win_a.png");
     g_winB = mkSprite("rift_win_b.png");
-    // gambar bisa dimuat dengan content scale 2 -> ukuran poin = piksel / csf
     float csf = 1.0f;
     if (g_winA && g_cSize) {
         const Size2 *c = g_cSize(g_winA);
@@ -406,35 +778,43 @@ static void buildOverlay() {
         if (csf < 1.0f) csf = 1.0f;
         if (csf > 4.0f) csf = 4.0f;
     }
-    float F = 0.92f;                         // jendela = 92% tinggi layar
-    float S = F * g_winH * csf / 709.5f;     // skala sprite jendela
-    g_sp = F * g_winH / 556.0f;              // poin per unit desain
+    float F = 0.92f;
+    float S = F * g_winH * csf / 709.5f;
+    g_sp = F * g_winH / 556.0f;
     g_S = S;
+    g_csf = csf;
     g_tab = 0;
-    LOGI("overlay: csf=%.2f S=%.3f sp=%.3f", csf, S, g_sp);
-    void *dim = mkSprite("rift_dim.png");
-    if (dim) {
-        g_setScale(dim, big * csf / 64.0f * 1.4f);
-        g_setPos(dim, cx, cy);
-        g_addChild(root, dim);
+    g_anim = 0;
+    LOGI("overlay: csf=%.2f S=%.3f sp=%.3f tick=%d", csf, S, g_sp, (int) g_tickOK);
+    g_dim = mkSprite("rift_dim.png");
+    if (g_dim) {
+        g_setScale(g_dim, big * csf / 64.0f * 1.4f);
+        g_setPos(g_dim, cx, cy);
+        addZ(root, g_dim, 0);
     }
     char nm[32];
     for (int i = 0; i < 3; i++) {
         snprintf(nm, sizeof nm, "rift_orb%d.png", i + 1);
         void *o = mkSprite(nm);
         if (!o) continue;
-        g_setScale(o, g_winH * (1.0f + 0.25f * i) * csf / 256.0f);
-        float ox = cx + (i == 0 ? -0.30f : (i == 1 ? 0.32f : 0.02f)) * g_winW;
-        float oy = cy + (i == 0 ? 0.18f : (i == 1 ? -0.20f : 0.34f)) * g_winH;
-        g_setPos(o, ox, oy);
-        g_addChild(root, o);
-        animOrb(o, (i == 1 ? -1 : 1) * 0.10f * g_winW, (i == 2 ? -1 : 1) * 0.10f * g_winH, 3.2f + i * 0.9f, 70, 200);
+        g_orbS[i] = g_winH * (1.0f + 0.25f * i) * csf / 256.0f;
+        g_orbX[i] = cx + (i == 0 ? -0.30f : (i == 1 ? 0.32f : 0.02f)) * g_winW;
+        g_orbY[i] = cy + (i == 0 ? 0.18f : (i == 1 ? -0.20f : 0.34f)) * g_winH;
+        g_setScale(o, g_orbS[i]);
+        g_setPos(o, g_orbX[i], g_orbY[i]);
+        addZ(root, o, 1);
+        g_orb[i] = o;
     }
-    if (g_winA) { g_setScale(g_winA, S); g_setPos(g_winA, cx, cy); g_addChild(root, g_winA); }
-    if (g_winB) { g_setScale(g_winB, S); g_setPos(g_winB, cx, cy); g_addChild(root, g_winB); if (g_setVis) g_setVis(g_winB, false); }
-
+    if (g_winA) { g_setScale(g_winA, S); g_setPos(g_winA, cx, cy); addZ(root, g_winA, 2); }
+    if (g_winB) { g_setScale(g_winB, S); g_setPos(g_winB, cx, cy); addZ(root, g_winB, 2); if (g_setVis) g_setVis(g_winB, false); }
     g_empty = mkSprite("rift_empty.png");
-    if (g_empty) { g_setScale(g_empty, S); g_setPos(g_empty, cx, cy); g_addChild(root, g_empty); }
+    if (g_empty) { g_setScale(g_empty, S); g_setPos(g_empty, cx, cy); addZ(root, g_empty, 3); }
+    g_mTopA = mkMask("rift_win_a.png", 0.0f, 378.0f);
+    g_mTopB = mkMask("rift_win_b.png", 0.0f, 378.0f);
+    g_mBot = mkMask("rift_win_a.png", 689.0f, 61.0f);
+    if (g_mTopA) addZ(root, g_mTopA, 5);
+    if (g_mTopB) { addZ(root, g_mTopB, 5); if (g_setVis) g_setVis(g_mTopB, false); }
+    if (g_mBot) addZ(root, g_mBot, 5);
 
     g_restart = g_node();
     if (g_restart) {
@@ -442,26 +822,25 @@ static void buildOverlay() {
         if (rb) { g_setScale(rb, S); g_setPos(rb, lx(501.5f), ly(554.0f)); g_addChild(g_restart, rb); }
         Color3B wh = {255, 255, 255};
         fitLabel(g_restart, "Restart game", lx(501.5f), ly(554.0f), 190.0f * g_sp, 16.0f * g_sp, 2, wh);
-        g_addChild(root, g_restart);
+        addZ(root, g_restart, 6);
         if (g_setVis) g_setVis(g_restart, g_pending);
     }
-
     void *menu = g_menu();
     if (menu) {
         g_setPos(menu, 0.0f, 0.0f);
-        // cadangan kalau hook sentuhan tidak jalan: item menu biasa
         addHit(menu, "rift_hit_close.png", S, onClose, lx(930.0f), ly(86.0f));
         addHit(menu, "rift_hit_tab1.png", S, onTabA, lx(181.5f), ly(185.0f));
         addHit(menu, "rift_hit_tab2.png", S, onTabB, lx(431.5f), ly(185.0f));
         addHit(menu, "rift_hit_refresh.png", S, onRefresh, lx(869.0f), ly(253.5f));
         addHit(menu, "rift_hit_win.png", S * 10.0f, onNoop, cx, cy);
         addHit(menu, "rift_blank.png", big * csf / 8.0f * 1.3f, onClose, cx, cy);
-        g_addChild(root, menu);
+        addZ(root, menu, 7);
     }
     if (g_addChildZ) g_addChildZ(g_layer, root, 1000); else g_addChild(g_layer, root);
     g_overlay = root;
     g_open = true;
     g_press = 0;
+    if (g_tickOK) { g_anim = 1; g_animT = 0.0f; applyRoot(0.85f, 0.0f); }
     rebuildCards();
 }
 
@@ -473,6 +852,7 @@ static void onRiftButton(void *self, void *sender) {
         g_tab = 0;
         g_open = true;
         g_press = 0;
+        if (g_tickOK) { g_anim = 1; g_animT = 0.0f; applyRoot(0.85f, 0.0f); }
         rebuildCards();
         if (g_bcards) rebuildBrowse();
         showTab();
@@ -552,7 +932,7 @@ static bool hkMenuInit(void *self) {
     bool ok = g_origInit(self);
     if (!ok) return ok;
     g_layer = self;
-    g_overlay = nullptr; g_open = false; g_winA = g_winB = g_cards = g_empty = g_bcards = g_restart = nullptr;
+    g_overlay = nullptr; g_open = false; g_winA = g_winB = g_cards = g_empty = g_bcards = g_restart = g_hint = g_mTopA = g_mTopB = g_mBot = g_dim = nullptr; g_anim = 0; g_orb[0] = g_orb[1] = g_orb[2] = nullptr; g_cn2[0] = g_cn2[1] = 0; g_qlabel = nullptr; g_query[0] = 0; g_holdSlot = -1;
     if (g_shared && g_winSize) {
         void *dir = g_shared();
         if (dir) {
@@ -610,6 +990,7 @@ __attribute__((constructor)) static void rift_main() {
     g_setVis      = (SetVisFn)      sym2(h, "_ZN7cocos2d6CCNode10setVisibleEb", nullptr);
     installExtra(h);
     hookTouches(h);
+    riftFileHook();
     void *target = dlsym(h, "_ZN9MenuLayer4initEv");
     if (!target) { LOGI("MenuLayer::init tidak ketemu"); return; }
     A64HookFunction(target, (void *)hkMenuInit, (void **)&g_origInit);

@@ -32,7 +32,7 @@ typedef void (*CallVoidFn)(void *, void *, void *, ...);
 
 #define JF(env, idx, T) ((T)(*(void ***) (env))[idx])
 
-static void *g_vm, *g_cls, *g_mFetch, *g_mDl, *g_mRestart;
+static void *g_vm, *g_cls, *g_mFetch, *g_mDl, *g_mRestart, *g_mUi, *g_mPoll;
 
 static void *getEnv() {
     if (!g_vm) return nullptr;
@@ -57,6 +57,10 @@ extern "C" int JNI_OnLoad(void *vm, void *reserved) {
             g_mFetch = gm(env, g_cls, "fetchText", "(Ljava/lang/String;)Ljava/lang/String;");
             g_mDl = gm(env, g_cls, "download", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;");
             g_mRestart = gm(env, g_cls, "restart", "()V");
+            if (JF(env, 228, ExcFn)(env)) JF(env, 17, ExcClrFn)(env);
+            g_mUi = gm(env, g_cls, "ui", "(Ljava/lang/String;)Ljava/lang/String;");
+            if (JF(env, 228, ExcFn)(env)) JF(env, 17, ExcClrFn)(env);
+            g_mPoll = gm(env, g_cls, "poll", "(Ljava/lang/String;)Ljava/lang/String;");
             if (JF(env, 228, ExcFn)(env)) JF(env, 17, ExcClrFn)(env);
         }
         LOGN("JNI_OnLoad: RiftNet=%d fetch=%d dl=%d restart=%d", g_cls != nullptr, g_mFetch != nullptr, g_mDl != nullptr, g_mRestart != nullptr);
@@ -84,6 +88,16 @@ static bool callStr(void *mid, const char *a, const char *b, char *out, int n) {
     if (ja) del(env, ja);
     if (jb) del(env, jb);
     return true;
+}
+
+void riftnet_ui(const char *cmd) {
+    char o[16];
+    callStr(g_mUi, cmd, nullptr, o, sizeof o);
+}
+
+bool riftnet_poll(char *out, int n) {
+    callStr(g_mPoll, "x", nullptr, out, n);
+    return out[0] != 0;
 }
 
 void riftnet_restart() {

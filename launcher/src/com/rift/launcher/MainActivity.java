@@ -1,22 +1,21 @@
 package com.rift.launcher;
 
+import android.animation.ObjectAnimator;
+import android.animation.ValueAnimator;
 import android.app.Activity;
-import android.app.Dialog;
-import android.content.ClipData;
-import android.content.ClipboardManager;
-import android.content.Context;
 import android.content.Intent;
-import android.content.res.ColorStateList;
 import android.graphics.Color;
-import android.graphics.Typeface;
-import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.RippleDrawable;
+import android.content.res.ColorStateList;
+import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.Window;
+import android.view.animation.AccelerateDecelerateInterpolator;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -24,65 +23,9 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 public class MainActivity extends Activity {
-    static final String GD = "com.robtopx.geometryjump";
-    static final int VIOLET = Color.parseColor("#7657FF");
-    static final int LAVENDER = Color.parseColor("#A99AFF");
-    static final int WHITE = Color.parseColor("#E8E9F0");
-    static final int DIM = Color.parseColor("#7C819B");
-    static final int GREEN = Color.parseColor("#5BE584");
-    static final int RED = Color.parseColor("#FF7A90");
-    static final int CARD = Color.parseColor("#1F2336");
-
-    private int dp(int v) {
-        return (int) (v * getResources().getDisplayMetrics().density + 0.5f);
-    }
-
-    private GradientDrawable shape(int color, int radiusDp) {
-        GradientDrawable g = new GradientDrawable();
-        g.setColor(color);
-        g.setCornerRadius(dp(radiusDp));
-        return g;
-    }
-
-    private TextView text(String s, int sp, int color, boolean bold) {
-        TextView t = new TextView(this);
-        t.setText(s);
-        t.setTextSize(sp);
-        t.setTextColor(color);
-        if (bold) t.setTypeface(Typeface.DEFAULT_BOLD);
-        return t;
-    }
-
-    private void press(View v, int color, int radiusDp) {
-        GradientDrawable bg = shape(color, radiusDp);
-        GradientDrawable mask = shape(Color.WHITE, radiusDp);
-        v.setBackground(new RippleDrawable(ColorStateList.valueOf(Color.parseColor("#44FFFFFF")), bg, mask));
-    }
-
-    private View line(String label, String value, int state) {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(0, dp(9), 0, dp(9));
-        int color = state > 0 ? GREEN : (state < 0 ? RED : DIM);
-        String mark = state > 0 ? "\u2713" : (state < 0 ? "\u2717" : "\u2022");
-        TextView icon = text(mark, 16, color, true);
-        icon.setGravity(Gravity.CENTER);
-        row.addView(icon, new LinearLayout.LayoutParams(dp(26), ViewGroup.LayoutParams.WRAP_CONTENT));
-        TextView l = text(label, 14, WHITE, false);
-        row.addView(l, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        TextView v = text(value, 13, state == 0 ? DIM : color, false);
-        v.setGravity(Gravity.RIGHT);
-        row.addView(v, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f));
-        return row;
-    }
-
-    private View divider() {
-        View d = new View(this);
-        d.setBackgroundColor(Color.parseColor("#2A2F47"));
-        d.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1));
-        return d;
-    }
+    private LinearLayout status;
+    private TextView banner;
+    private String updateUrl;
 
     private void launchGame() {
         try {
@@ -93,171 +36,190 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void showSettings(final Probe p) {
-        final Dialog d = new Dialog(this);
-        d.requestWindowFeature(Window.FEATURE_NO_TITLE);
+    private View statusRow(String label, String value, int color) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, U.dp(this, 11), 0, U.dp(this, 11));
+        View dot = new View(this);
+        dot.setBackground(U.shape(this, color, 6));
+        row.addView(dot, new LinearLayout.LayoutParams(U.dp(this, 8), U.dp(this, 8)));
+        TextView l = U.text(this, label, 14, U.WHITE, false);
+        l.setPadding(U.dp(this, 12), 0, 0, 0);
+        row.addView(l, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView v = U.text(this, value, 14, color, false);
+        v.setGravity(Gravity.RIGHT);
+        row.addView(v);
+        return row;
+    }
 
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(22), dp(22), dp(22), dp(16));
-        box.setBackground(shape(CARD, 26));
+    private void refresh() {
+        Probe p = Probe.run(this);
+        status.removeAllViews();
+        TextView h = U.text(this, "STATUS", 12, U.LAVENDER, true);
+        h.setLetterSpacing(0.12f);
+        status.addView(h);
+        status.addView(statusRow("Geometry Dash", p.installed ? "v" + p.version : "belum ke-install", p.installed ? U.GREEN : U.RED));
+        int n = RiftTools.modCount(this);
+        status.addView(statusRow("Mods", n + " terpasang", n > 0 ? U.GREEN : U.DIM));
+        boolean safe = RiftTools.safeMode(this);
+        status.addView(statusRow("Safe mode", safe ? "aktif" : "mati", safe ? U.RED : U.DIM));
+        status.addView(statusRow("Rift Core", "jalan di dalam Rift", U.GREEN));
+    }
 
-        box.addView(text("Pengaturan Rift", 22, WHITE, true));
-        TextView sub = text("Diagnostik Geometry Dash", 12, LAVENDER, false);
-        sub.setPadding(0, dp(2), 0, dp(10));
-        box.addView(sub);
-
-        boolean good = p.allGood();
-        TextView verdict = text(good ? "\u2713  Siap lanjut ke tahap launcher" : "\u2717  Ada yang perlu dicek", 13, good ? GREEN : RED, true);
-        verdict.setPadding(dp(14), dp(9), dp(14), dp(9));
-        verdict.setBackground(shape(Color.parseColor(good ? "#1E3A2A" : "#3A2029"), 14));
-        box.addView(verdict);
-
-        LinearLayout rows = new LinearLayout(this);
-        rows.setOrientation(LinearLayout.VERTICAL);
-        rows.setPadding(0, dp(8), 0, 0);
-        rows.addView(line("Geometry Dash", p.installed ? "v" + p.version : "belum ke-install", p.installed ? 1 : -1));
-        rows.addView(divider());
-        rows.addView(line("Jenis APK", p.split ? "split (belum didukung)" : "tunggal", p.split ? -1 : 1));
-        rows.addView(divider());
-        String libVal = p.soCount == 0 ? "tidak ketemu" : (p.libsReady() ? "dalam APK, siap dimuat" : "terkompres, perlu diekstrak");
-        rows.addView(line("Lib native", libVal, p.libsReady() ? 1 : -1));
-        rows.addView(divider());
-        rows.addView(line("libcocos2dcpp.so", p.hasCocos ? "ada" : "tidak ada", p.hasCocos ? 1 : -1));
-        rows.addView(divider());
-        rows.addView(line("Kelas Java GD", p.classOk ? "bisa dimuat" : "gagal", p.classOk ? 1 : -1));
-        rows.addView(divider());
-        rows.addView(line("Akses kode GD", p.ctxOk ? "diizinkan" : "ditolak", p.ctxOk ? 1 : -1));
-        rows.addView(divider());
-        rows.addView(line("Rift di dalam GD", p.hasRift ? "ya (APK patch)" : "tidak (GD asli)", p.hasRift ? 1 : 0));
-
-        TextView detail = text("sourceDir:\n" + p.sourceDir + "\n\nnativeLibDir:\n" + p.libDir, 10, DIM, false);
-        detail.setTypeface(Typeface.MONOSPACE);
-        detail.setPadding(0, dp(12), 0, 0);
-        rows.addView(detail);
-
-        ScrollView sv = new ScrollView(this);
-        sv.addView(rows);
-        box.addView(sv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        LinearLayout btns = new LinearLayout(this);
-        btns.setOrientation(LinearLayout.HORIZONTAL);
-        btns.setGravity(Gravity.RIGHT);
-        btns.setPadding(0, dp(14), 0, 0);
-
-        TextView copy = text("Salin laporan", 14, LAVENDER, true);
-        copy.setGravity(Gravity.CENTER);
-        copy.setPadding(dp(18), dp(11), dp(18), dp(11));
-        press(copy, Color.parseColor("#262A3D"), 22);
-        copy.setOnClickListener(new View.OnClickListener() {
-            public void onClick(View v) {
-                ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-                cm.setPrimaryClip(ClipData.newPlainText("Rift", p.report()));
-                Toast.makeText(MainActivity.this, "Laporan disalin", Toast.LENGTH_SHORT).show();
-            }
-        });
-        btns.addView(copy);
-
-        TextView close = text("Tutup", 14, Color.WHITE, true);
-        close.setGravity(Gravity.CENTER);
-        close.setPadding(dp(26), dp(11), dp(26), dp(11));
-        press(close, VIOLET, 22);
-        close.setOnClickListener(new View.OnClickListener() {
-            public void onClick(View v) {
-                d.dismiss();
-            }
-        });
-        LinearLayout.LayoutParams closeLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        closeLp.leftMargin = dp(10);
-        btns.addView(close, closeLp);
-        box.addView(btns);
-
-        d.setContentView(box);
-        Window w = d.getWindow();
-        w.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-        w.setLayout((int) (getResources().getDisplayMetrics().widthPixels * 0.92f), ViewGroup.LayoutParams.WRAP_CONTENT);
-        d.show();
+    private LinearLayout pill(String t, int sp, int color, boolean solid) {
+        LinearLayout b = new LinearLayout(this);
+        b.setGravity(Gravity.CENTER);
+        b.addView(U.text(this, t, sp, solid ? Color.WHITE : U.WHITE, true));
+        U.press(this, b, color, 28);
+        return b;
     }
 
     @Override
-    protected void onCreate(Bundle b) {
-        super.onCreate(b);
-        getWindow().setStatusBarColor(Color.parseColor("#1E2133"));
-        getWindow().setNavigationBarColor(Color.parseColor("#12141C"));
+    protected void onCreate(Bundle sb) {
+        super.onCreate(sb);
+        final boolean black = RiftTools.pref(this, "black", false);
+        getWindow().setStatusBarColor(Color.TRANSPARENT);
+        getWindow().setNavigationBarColor(Color.parseColor(black ? "#000000" : "#12141C"));
+        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
 
-        Probe p = Probe.run(this);
+        FrameLayout frame = new FrameLayout(this);
+        frame.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                black ? new int[] { Color.BLACK, Color.BLACK } : new int[] { Color.parseColor("#1D2033"), Color.parseColor("#10121A") }));
 
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setGravity(Gravity.CENTER);
-        root.setPadding(dp(24), dp(24), dp(24), dp(24));
-        root.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[] { Color.parseColor("#1E2133"), Color.parseColor("#12141C") }));
+        View glow = new View(this);
+        GradientDrawable gd = new GradientDrawable();
+        gd.setGradientType(GradientDrawable.RADIAL_GRADIENT);
+        gd.setGradientRadius(U.dp(this, 260));
+        gd.setColors(new int[] { Color.parseColor("#557657FF"), Color.parseColor("#007657FF") });
+        glow.setBackground(gd);
+        FrameLayout.LayoutParams glp = new FrameLayout.LayoutParams(U.dp(this, 520), U.dp(this, 520), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        glp.topMargin = -U.dp(this, 150);
+        frame.addView(glow, glp);
+        ObjectAnimator pulse = ObjectAnimator.ofFloat(glow, "alpha", 0.55f, 1f);
+        pulse.setDuration(3200);
+        pulse.setRepeatCount(ValueAnimator.INFINITE);
+        pulse.setRepeatMode(ValueAnimator.REVERSE);
+        pulse.setInterpolator(new AccelerateDecelerateInterpolator());
+        pulse.start();
 
-        LinearLayout logoRow = new LinearLayout(this);
-        logoRow.setOrientation(LinearLayout.HORIZONTAL);
-        logoRow.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setGravity(Gravity.CENTER_HORIZONTAL);
+        col.setPadding(U.dp(this, 24), U.dp(this, 56), U.dp(this, 24), U.dp(this, 28));
+        int d = 0;
+
         ImageView logo = new ImageView(this);
         logo.setImageResource(getResources().getIdentifier("ic_rift_logo", "drawable", getPackageName()));
-        logoRow.addView(logo, new LinearLayout.LayoutParams(dp(76), dp(76)));
-        TextView name = text("Rift", 46, WHITE, true);
-        name.setPadding(dp(16), 0, 0, 0);
-        logoRow.addView(name);
-        root.addView(logoRow);
+        col.addView(logo, new LinearLayout.LayoutParams(U.dp(this, 96), U.dp(this, 96)));
+        ObjectAnimator fl = ObjectAnimator.ofFloat(logo, "translationY", 0f, -U.dp(this, 6), 0f);
+        fl.setDuration(3600);
+        fl.setRepeatCount(ValueAnimator.INFINITE);
+        fl.setInterpolator(new AccelerateDecelerateInterpolator());
+        fl.start();
+        TextView name = U.text(this, "Rift", 44, U.WHITE, true);
+        name.setPadding(0, U.dp(this, 8), 0, 0);
+        col.addView(name);
+        TextView sub = U.text(this, "Mod loader for Geometry Dash", 13, U.LAVENDER, false);
+        col.addView(sub);
+        U.fadeIn(logo, d); U.fadeIn(name, d += 60); U.fadeIn(sub, d += 40);
 
-        LinearLayout btnRow = new LinearLayout(this);
-        btnRow.setOrientation(LinearLayout.HORIZONTAL);
-        btnRow.setGravity(Gravity.CENTER_VERTICAL);
-        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        rowLp.topMargin = dp(40);
+        banner = U.text(this, "", 13, Color.WHITE, true);
+        banner.setGravity(Gravity.CENTER);
+        banner.setPadding(U.dp(this, 16), U.dp(this, 10), U.dp(this, 16), U.dp(this, 10));
+        banner.setBackground(U.shape(this, Color.parseColor("#3A2F7A"), 16));
+        banner.setVisibility(View.GONE);
+        banner.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(updateUrl != null ? updateUrl : "https://github.com/riftsgd-app/Rift/releases/latest")));
+            }
+        });
+        col.addView(banner, U.lp(this, 18));
 
-        TextView launch = text("\u25B6   Launch", 18, Color.WHITE, true);
-        launch.setGravity(Gravity.CENTER);
-        launch.setPadding(dp(40), dp(16), dp(40), dp(16));
-        press(launch, VIOLET, 30);
+        LinearLayout launch = pill("Launch", 20, U.VIOLET, true);
+        GradientDrawable lg = new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, new int[] { Color.parseColor("#7657FF"), Color.parseColor("#9D7DFF") });
+        lg.setCornerRadius(U.dp(this, 30));
+        GradientDrawable lm = new GradientDrawable();
+        lm.setColor(Color.WHITE);
+        lm.setCornerRadius(U.dp(this, 30));
+        launch.setBackground(new RippleDrawable(ColorStateList.valueOf(Color.parseColor("#55FFFFFF")), lg, lm));
         launch.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { launchGame(); }
+        });
+        col.addView(launch, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, U.dp(this, 60)));
+        ((LinearLayout.LayoutParams) launch.getLayoutParams()).topMargin = U.dp(this, 30);
+        U.fadeIn(launch, d += 60);
+
+        LinearLayout two = new LinearLayout(this);
+        LinearLayout mods = pill("Mods folder", 15, U.CARD2, false);
+        LinearLayout set = pill("Settings", 15, U.CARD2, false);
+        mods.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
-                launchGame();
+                try {
+                    Intent i = new Intent(Intent.ACTION_VIEW);
+                    i.setDataAndType(Uri.parse("content://com.android.externalstorage.documents/document/primary%3AAndroid%2Fmedia%2Fcom.rift.launcher%2Fmods"), "vnd.android.document/directory");
+                    startActivity(i);
+                } catch (Throwable t) {
+                    Toast.makeText(MainActivity.this, "Folder: Android/media/com.rift.launcher/mods", Toast.LENGTH_LONG).show();
+                }
             }
         });
-        btnRow.addView(launch);
-
-        TextView gear = text("\u2699", 26, WHITE, false);
-        gear.setGravity(Gravity.CENTER);
-        gear.setPadding(dp(16), dp(10), dp(16), dp(10));
-        press(gear, Color.parseColor("#262A3D"), 30);
-        gear.setOnClickListener(new View.OnClickListener() {
-            public void onClick(View v) {
-                showSettings(Probe.run(MainActivity.this));
-            }
+        set.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { startActivity(new Intent(MainActivity.this, SettingsActivity.class)); }
         });
-        LinearLayout.LayoutParams gearLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        gearLp.leftMargin = dp(14);
-        btnRow.addView(gear, gearLp);
-        root.addView(btnRow, rowLp);
+        LinearLayout.LayoutParams a1 = new LinearLayout.LayoutParams(0, U.dp(this, 52), 1f);
+        a1.rightMargin = U.dp(this, 6);
+        LinearLayout.LayoutParams a2 = new LinearLayout.LayoutParams(0, U.dp(this, 52), 1f);
+        a2.leftMargin = U.dp(this, 6);
+        two.addView(mods, a1);
+        two.addView(set, a2);
+        col.addView(two, U.lp(this, 12));
+        U.fadeIn(two, d += 60);
 
-        LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(22), dp(14), dp(22), dp(14));
-        card.setBackground(shape(CARD, 22));
-        TextView head = text("STATUS", 12, LAVENDER, true);
-        head.setPadding(0, 0, 0, dp(2));
-        card.addView(head);
-        card.addView(line("Geometry Dash", p.installed ? "v" + p.version : "belum ke-install", p.installed ? 1 : -1));
-        card.addView(divider());
-        card.addView(line("Rift Core", p.hasRift ? "terpasang di GD" : "belum terpasang", p.hasRift ? 1 : 0));
-        card.addView(divider());
-        card.addView(line("Mode", "jalan di dalam Rift", 0));
-        LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        cardLp.topMargin = dp(36);
-        root.addView(card, cardLp);
+        status = new LinearLayout(this);
+        status.setOrientation(LinearLayout.VERTICAL);
+        status.setPadding(U.dp(this, 20), U.dp(this, 16), U.dp(this, 20), U.dp(this, 8));
+        status.setBackground(U.shape(this, U.CARD, 22));
+        col.addView(status, U.lp(this, 20));
+        U.fadeIn(status, d += 60);
 
-        TextView foot = text("Rift Launcher 0.5.12", 12, DIM, false);
-        foot.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams footLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        footLp.topMargin = dp(28);
-        root.addView(foot, footLp);
+        TextView foot = U.text(this, "Rift Launcher " + RiftTools.version(this), 12, U.DIM, false);
+        foot.setPadding(0, U.dp(this, 22), 0, 0);
+        col.addView(foot);
+        U.fadeIn(foot, d + 60);
 
-        setContentView(root);
+        ScrollView sv = new ScrollView(this);
+        sv.setFillViewport(true);
+        sv.addView(col);
+        frame.addView(sv);
+        setContentView(frame);
+        refresh();
+
+        if (RiftTools.pref(this, "autoupd", true)) {
+            RiftTools.checkUpdate(new RiftTools.UpdateCb() {
+                public void done(String tag, String url, String err) {
+                    if (err != null || tag == null) return;
+                    try {
+                        if (RiftTools.newer(tag, RiftTools.version(MainActivity.this))) {
+                            updateUrl = url;
+                            banner.setText("Update " + tag + " tersedia - ketuk buat download");
+                            banner.setVisibility(View.VISIBLE);
+                            U.fadeIn(banner, 0);
+                        }
+                    } catch (Throwable t) { }
+                }
+            });
+        }
+        if (sb == null && RiftTools.pref(this, "auto", false)) {
+            Toast.makeText(this, "Auto launch...", Toast.LENGTH_SHORT).show();
+            new Handler().postDelayed(new Runnable() {
+                public void run() { launchGame(); }
+            }, 1400);
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (status != null) refresh();
     }
 }
