@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.rift.launcher"
-    android:versionCode="17"
-    android:versionName="0.5.12">
+    android:versionCode="21"
+    android:versionName="1.0.0">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -31,5 +31,6 @@
             android:launchMode="singleTask"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|screenLayout|uiMode|navigation"
             android:theme="@android:style/Theme.NoTitleBar.Fullscreen" />
+        <activity android:name=".SettingsActivity" android:exported="false" />
     </application>
 </manifest>
