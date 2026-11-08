@@ -1,12 +1,6 @@
 {
   "version": 1,
   "mods": [
-    {"id": "rift.hello", "name": "Hello Mod", "author": "Rift", "description": "Sample mod that writes a log line at startup.", "url": "https://github.com/riftsgd-app/rift/releases/download/catalog/hello.rift"},
-    {"id": "pulse.soundboard", "name": "Soundboard", "author": "Pulse", "description": "Trigger custom sounds on jumps and deaths.", "url": ""},
-    {"id": "echo.macropad", "name": "Macro Pad", "author": "echo", "description": "Record and replay inputs for testing sections.", "url": ""},
-    {"id": "nova.iconstudio", "name": "Icon Studio", "author": "Nova", "description": "Recolor and preview every icon in one menu.", "url": ""},
-    {"id": "vex.framestepper", "name": "Frame Stepper", "author": "vex", "description": "Step through any attempt one frame at a time.", "url": ""},
-    {"id": "kiro.practiceplus", "name": "Practice+", "author": "kiro", "description": "Better checkpoints and run stats for practice mode.", "url": ""},
-    {"id": "lumen.neontrails", "name": "Neon Trails", "author": "Lumen", "description": "Glowing trails that follow your icon.", "url": ""}
+    {"id": "rift.hello", "name": "Hello Mod", "author": "Rift", "description": "Sample mod that writes a log line at startup.", "url": "https://github.com/riftsgd-app/rift/releases/download/catalog/hello.rift"}
   ]
 }
