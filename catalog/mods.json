@@ -1,11 +1,11 @@
 {
   "version": 1,
   "mods": [
-    {"id": "rift.hello", "name": "Hello Mod", "author": "Rift", "description": "Sample mod that writes a log line at startup.", "url": "https://github.com/riftsgd-app/rift/releases/download/catalog/hello.rift"},
-    {"id": "rift.percent", "name": "Percent Display", "author": "Rift", "description": "Big progress percent at the top of the screen.", "url": "https://github.com/riftsgd-app/rift/releases/download/catalog/percent.rift"},
-    {"id": "rift.cps", "name": "CPS Counter", "author": "Rift", "description": "Shows your clicks per second.", "url": "https://github.com/riftsgd-app/rift/releases/download/catalog/cps.rift"},
-    {"id": "rift.deathspots", "name": "Death Spots", "author": "Rift", "description": "Tracks where you die most often.", "url": "https://github.com/riftsgd-app/rift/releases/download/catalog/deathspots.rift"},
-    {"id": "rift.gg", "name": "GG Banner", "author": "Rift", "description": "Shows GG! when you beat a level.", "url": "https://github.com/riftsgd-app/rift/releases/download/catalog/gg.rift"},
-    {"id": "rift.quotes", "name": "Death Quotes", "author": "Rift", "description": "A little encouragement every time you die.", "url": "https://github.com/riftsgd-app/rift/releases/download/catalog/quotes.rift"}
+    {"id": "rift.cps", "name": "CPS Counter", "author": "Rift", "version": "1.0.0", "description": "Hitung klik per detik", "url": "https://github.com/riftsgd-app/rift/releases/download/catalog/cps.rift", "sha256": "250239bf94cd0f1ed46a38165b7ad22d8f84742a258df7ec139e652f1ffa27cd"},
+    {"id": "rift.deathspots", "name": "Death Spots", "author": "Rift", "version": "1.0.0", "description": "Catat di persen berapa kamu paling sering mati", "url": "https://github.com/riftsgd-app/rift/releases/download/catalog/deathspots.rift", "sha256": "ab49745bfc794c747cfb11e5f63c8968a5e75445dcd372273ec680db8e77825e"},
+    {"id": "rift.gg", "name": "GG Banner", "author": "Rift", "version": "1.0.0", "description": "Tulisan GG! pas level selesai", "url": "https://github.com/riftsgd-app/rift/releases/download/catalog/gg.rift", "sha256": "69b32f5bf4d09b51bbfdd20605faf205b99089f202e8b1f962212a0a4400a32a"},
+    {"id": "rift.hello", "name": "Hello Mod", "author": "Rift", "version": "1.0.0", "description": "Contoh mod paling sederhana: nulis log pas menu utama kebuka.", "url": "https://github.com/riftsgd-app/rift/releases/download/catalog/hello.rift", "sha256": "d8af06b738082f1a90cf7db029bd9ae17e626225f78ed09f3e152b2cc265a4aa"},
+    {"id": "rift.percent", "name": "Percent Display", "author": "Rift", "version": "1.0.0", "description": "Persen progress besar di atas layar", "url": "https://github.com/riftsgd-app/rift/releases/download/catalog/percent.rift", "sha256": "bc148ead9c9ba4c5289e78badaa9742f87195d455028e566ec313edbe6b52c3c"},
+    {"id": "rift.quotes", "name": "Death Quotes", "author": "Rift", "version": "1.0.0", "description": "Kata-kata penyemangat tiap kali mati", "url": "https://github.com/riftsgd-app/rift/releases/download/catalog/quotes.rift", "sha256": "b5da7260c9bfddfbb3ed26a8dd405636a51478546e373018161b1f67ce6661cc"}
   ]
 }
