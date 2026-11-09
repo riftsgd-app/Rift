@@ -1,0 +1,9 @@
+{
+  "id": "rift.percent",
+  "name": "Percent Display",
+  "version": "1.0.0",
+  "author": "Rift",
+  "description": "Persen progress besar di atas layar",
+  "api": 2,
+  "binary": "mod.so"
+}

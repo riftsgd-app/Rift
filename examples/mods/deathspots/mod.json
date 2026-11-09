@@ -1,0 +1,9 @@
+{
+  "id": "rift.deathspots",
+  "name": "Death Spots",
+  "version": "1.0.0",
+  "author": "Rift",
+  "description": "Catat di persen berapa kamu paling sering mati",
+  "api": 2,
+  "binary": "mod.so"
+}

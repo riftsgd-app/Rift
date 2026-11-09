@@ -1,0 +1,9 @@
+{
+  "id": "rift.cps",
+  "name": "CPS Counter",
+  "version": "1.0.0",
+  "author": "Rift",
+  "description": "Hitung klik per detik",
+  "api": 2,
+  "binary": "mod.so"
+}

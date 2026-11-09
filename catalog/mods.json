@@ -1,6 +1,11 @@
 {
   "version": 1,
   "mods": [
-    {"id": "rift.hello", "name": "Hello Mod", "author": "Rift", "description": "Sample mod that writes a log line at startup.", "url": "https://github.com/riftsgd-app/rift/releases/download/catalog/hello.rift"}
+    {"id": "rift.hello", "name": "Hello Mod", "author": "Rift", "description": "Sample mod that writes a log line at startup.", "url": "https://github.com/riftsgd-app/rift/releases/download/catalog/hello.rift"},
+    {"id": "rift.percent", "name": "Percent Display", "author": "Rift", "description": "Big progress percent at the top of the screen.", "url": "https://github.com/riftsgd-app/rift/releases/download/catalog/percent.rift"},
+    {"id": "rift.cps", "name": "CPS Counter", "author": "Rift", "description": "Shows your clicks per second.", "url": "https://github.com/riftsgd-app/rift/releases/download/catalog/cps.rift"},
+    {"id": "rift.deathspots", "name": "Death Spots", "author": "Rift", "description": "Tracks where you die most often.", "url": "https://github.com/riftsgd-app/rift/releases/download/catalog/deathspots.rift"},
+    {"id": "rift.gg", "name": "GG Banner", "author": "Rift", "description": "Shows GG! when you beat a level.", "url": "https://github.com/riftsgd-app/rift/releases/download/catalog/gg.rift"},
+    {"id": "rift.quotes", "name": "Death Quotes", "author": "Rift", "description": "A little encouragement every time you die.", "url": "https://github.com/riftsgd-app/rift/releases/download/catalog/quotes.rift"}
   ]
 }

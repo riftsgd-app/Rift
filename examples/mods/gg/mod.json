@@ -1,0 +1,9 @@
+{
+  "id": "rift.gg",
+  "name": "GG Banner",
+  "version": "1.0.0",
+  "author": "Rift",
+  "description": "Tulisan GG! pas level selesai",
+  "api": 2,
+  "binary": "mod.so"
+}

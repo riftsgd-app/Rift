@@ -1,0 +1,9 @@
+{
+  "id": "rift.quotes",
+  "name": "Death Quotes",
+  "version": "1.0.0",
+  "author": "Rift",
+  "description": "Kata-kata penyemangat tiap kali mati",
+  "api": 2,
+  "binary": "mod.so"
+}
